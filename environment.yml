@@ -1,0 +1,56 @@
+name: meow-chat
+channels:
+  - conda-forge
+  - defaults
+  - pytorch
+
+dependencies:
+  # 🐍 Python 기본
+  - python=3.10
+  - pip
+
+  # 🔬 과학계산 & 이미지처리 (conda 추천 - 자동 최적화)
+  - numpy                      # conda가 최적 버전 선택
+  - opencv                     # 복잡한 C++ 의존성 자동 해결
+  - matplotlib                 # 시각화
+  - pandas                     # 데이터 분석  
+  - pillow                     # 이미지 형식 지원
+  - scipy                      # 과학계산
+  - scikit-learn              # 머신러닝 기본
+  - scikit-image              # 이미지 처리 알고리즘
+
+  # 🤖 딥러닝 프레임워크 (conda 권장)
+  - pytorch                    # PyTorch (CPU 버전)
+  - torchvision               # 컴퓨터 비전
+  - cpuonly                   # CPU 전용 (GPU 필요시 제거)
+
+  # 🌐 네트워크 & 웹 (conda 안정 버전)
+  - requests                   # HTTP 클라이언트
+  - urllib3                    # URL 처리
+  - certifi                    # SSL 인증서
+  - aiohttp                   # 비동기 HTTP
+
+  # 💾 데이터 & 파일 처리
+  - pyyaml                    # YAML 파서
+  - sqlite                    # 경량 데이터베이스
+  - hdf5                      # 대용량 데이터 형식
+  - lxml                      # XML/HTML 처리
+
+  # 📊 Jupyter 환경 (conda 버전이 가장 안정적)
+  - jupyter                   # 노트북 환경
+  - jupyterlab               # 최신 인터페이스
+  - notebook                 # 클래식 노트북
+  - ipykernel                # Python 커널
+  - ipywidgets               # 인터랙티브 위젯
+
+  # 🔧 개발 도구 기본
+  - git                      # 버전 관리
+  - curl                     # 데이터 전송
+
+  # 🚀 성능 최적화 (conda가 시스템에 맞게 선택)
+  - openblas                 # 선형대수 최적화
+  - mkl                      # Intel 수학 라이브러리
+
+  # 📦 Pip 전용 패키지들 (conda에 없거나 pip이 더 나은 것들)
+  - pip:
+    - -r requirements.txt

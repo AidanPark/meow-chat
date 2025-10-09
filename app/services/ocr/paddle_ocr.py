@@ -8,6 +8,8 @@ License: Apache 2.0
 """
 
 import cv2
+import numpy as np
+from typing import Union
 from paddleocr import PaddleOCR
 from app.utils.image_util import plt_imshow, put_text
 
@@ -111,7 +113,6 @@ class MyPaddleOCR:
                 print(f"Did you mean: {suggestions}")
         
         return is_supported
-    
         
     def get_available_models(self):
         """
@@ -360,13 +361,15 @@ class MyPaddleOCR:
             utils.image_util.plt_imshow 함수를 사용합니다.
         """
         plt_imshow(img=self.img_path)
-        
-    def run_ocr(self, img_path: str, debug: bool = False):
+    
+    def run_ocr(self, img_input: Union[str, np.ndarray], debug: bool = False):
         """
         이미지에서 텍스트를 인식하는 OCR을 실행합니다.
         
         Args:
-            img_path (str): 분석할 이미지 파일 경로
+            img_input (Union[str, np.ndarray]): 
+                - str: 분석할 이미지 파일 경로
+                - np.ndarray: OpenCV 이미지 배열 (BGR 형식)
             debug (bool): 디버그 모드 활성화 여부 (기본값: False)
                          True일 경우 인식된 텍스트와 신뢰도를 출력합니다.
         
@@ -377,14 +380,30 @@ class MyPaddleOCR:
         Note:
             - 결과는 self.ocr_result에도 저장됩니다 (상세 정보 포함)
             - PaddleOCR의 최신 predict() API를 사용합니다
+            - numpy 배열과 파일 경로 모두 지원합니다
         """
-        self.img_path = img_path  # 이미지 경로 저장
+        # 입력 타입에 따른 처리
+        if isinstance(img_input, str):
+            # 파일 경로인 경우
+            self.img_path = img_input
+            input_source = img_input
+            if debug:
+                print(f"📁 파일에서 OCR 실행: {img_input}")
+        elif isinstance(img_input, np.ndarray):
+            # numpy 배열인 경우
+            self.img_path = "memory_image"  # 메모리 이미지 표시
+            input_source = img_input
+            if debug:
+                print(f"💾 메모리에서 OCR 실행: shape={img_input.shape}, dtype={img_input.dtype}")
+        else:
+            raise ValueError(f"지원하지 않는 입력 타입: {type(img_input)}. str 또는 np.ndarray만 지원합니다.")
+        
         ocr_text = []  # 인식된 텍스트를 저장할 리스트
         
         # PaddleOCR 최신 버전 API 사용
         try:
-            # PaddleOCR predict 메서드 호출
-            result = self._ocr.predict(img_path)
+            # PaddleOCR predict 메서드 호출 (파일 경로와 numpy 배열 모두 지원)
+            result = self._ocr.predict(input_source)
             
             # 결과가 리스트이고 첫 번째 요소에 데이터가 있는 경우
             if result and isinstance(result, list) and len(result) > 0:
@@ -399,27 +418,65 @@ class MyPaddleOCR:
                     
                     # 디버그 모드일 경우 결과 출력
                     if debug:
-                        print(f"인식된 텍스트: {ocr_text}")
+                        input_type = "파일" if isinstance(img_input, str) else "메모리"
+                        print(f"✅ {input_type} OCR 완료:")
+                        print(f"   📝 인식된 텍스트 ({len(ocr_text)}개): {ocr_text}")
                         if 'rec_scores' in page_result:
                             scores = page_result['rec_scores']
-                            print(f"신뢰도 점수: {[f'{score:.4f}' for score in scores]}")
+                            print(f"   📊 신뢰도: {[f'{score:.4f}' for score in scores]}")
+                        if 'rec_polys' in page_result:
+                            polys = page_result['rec_polys']
+                            print(f"   📍 좌표 정보: {len(polys)}개 영역")
                 else:
                     # 텍스트 정보가 없는 경우
                     self.ocr_result = {}
                     ocr_text = ["텍스트를 찾을 수 없습니다."]
+                    if debug:
+                        print("⚠️ OCR 결과에 텍스트 정보가 없습니다.")
             else:
                 # 결과가 비어있는 경우
                 self.ocr_result = {}
                 ocr_text = ["OCR 결과가 비어있습니다."]
+                if debug:
+                    print("⚠️ OCR 결과가 비어있습니다.")
                 
         except Exception as e:
             # OCR 실행 중 오류 발생
-            print(f"OCR 실행 중 오류: {e}")
+            print(f"❌ OCR 실행 중 오류: {e}")
             self.ocr_result = {}
             ocr_text = ["OCR 실행 실패"]
 
         return ocr_text
     
+    def run_ocr_from_bytes(self, image_bytes: bytes, debug: bool = False):
+        """
+        바이트 데이터에서 직접 OCR을 실행합니다.
+        
+        Args:
+            image_bytes (bytes): 이미지 파일의 바이트 데이터
+            debug (bool): 디버그 모드
+            
+        Returns:
+            list: 인식된 텍스트 리스트
+        """
+        try:
+            # 바이트 데이터를 numpy 배열로 변환
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            cv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            if cv_image is None:
+                raise ValueError("이미지 디코딩 실패")
+            
+            if debug:
+                print(f"🔄 바이트 데이터 변환 완료: {cv_image.shape}")
+            
+            # numpy 배열로 OCR 실행
+            return self.run_ocr(cv_image, debug=debug)
+            
+        except Exception as e:
+            print(f"❌ 바이트 데이터 OCR 실패: {e}")
+            return ["바이트 데이터 처리 실패"]
+        
     def show_img_with_ocr(self):
         """
         OCR 결과를 이미지 위에 시각화하여 표시합니다.
@@ -468,3 +525,31 @@ class MyPaddleOCR:
 
         # 원본 이미지와 OCR 결과 이미지를 나란히 표시
         plt_imshow(["Original", "ROI"], [img, roi_img], figsize=(16, 10))
+
+    def show_img(self):
+        """
+        현재 이미지를 matplotlib을 사용하여 화면에 표시합니다.
+        
+        Note:
+            메모리 이미지인 경우 표시할 수 없습니다.
+        """
+        if self.img_path == "memory_image":
+            print("⚠️ 메모리 이미지는 show_img()로 표시할 수 없습니다.")
+            print("💡 대신 run_ocr 실행 시 numpy 배열을 직접 사용하세요.")
+        else:
+            plt_imshow(img=self.img_path)
+
+    def save_memory_image(self, output_path: str, image_array: np.ndarray = None):
+        """
+        메모리에 있는 이미지를 파일로 저장합니다.
+        
+        Args:
+            output_path (str): 저장할 파일 경로
+            image_array (np.ndarray, optional): 저장할 이미지 배열
+                                                None인 경우 마지막 처리된 이미지 사용
+        """
+        if image_array is not None:
+            cv2.imwrite(output_path, image_array)
+            print(f"✅ 이미지 저장 완료: {output_path}")
+        else:
+            print("❌ 저장할 이미지 배열이 없습니다.")
