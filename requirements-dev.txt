@@ -1,0 +1,45 @@
+# Development Dependencies Only
+
+# 🔗 프로덕션 패키지 포함
+-r requirements.txt
+
+# 📊 Jupyter & Notebook (데이터 분석, 프로토타이핑)
+jupyter==1.0.0
+notebook==7.0.6
+ipykernel==6.26.0
+ipython==8.18.1
+
+# 🧪 Testing (테스트 자동화)
+pytest==7.4.3
+pytest-asyncio==0.21.1        # FastAPI 비동기 테스트
+httpx==0.25.2                  # API 테스트 클라이언트
+pytest-cov==4.1.0             # 코드 커버리지
+
+# ✨ Code Quality (코드 품질 관리)
+black==23.11.0                 # 코드 포맷터
+flake8==6.1.0                  # 코드 스타일 검사
+isort==5.12.0                  # import 정렬
+autopep8==2.0.4               # PEP8 자동 수정
+
+# 🔍 Type Checking (타입 검사)
+mypy==1.7.1
+
+# 📚 Documentation (문서화)
+mkdocs==1.5.3
+mkdocs-material==9.4.8
+
+# 🐛 Debugging (디버깅)
+pdbpp==0.10.3                 # pdb++ (올바른 패키지명)
+ipdb==0.13.13
+
+# 📈 Performance Monitoring (성능 모니터링)
+line-profiler==4.1.1
+memory-profiler==0.61.0
+
+# 🔒 Security Scanning (보안 검사)
+bandit==1.7.5
+safety==2.3.5
+
+# 📊 OCR 개발용 시각화 도구
+seaborn==0.12.2               # 통계 시각화
+plotly==5.17.0                # 인터랙티브 차트

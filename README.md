@@ -4,17 +4,182 @@
 ## 🧶 프로젝트 개요
 
 고양이 헬스케어 챗봇은 LangChain 기반의 RAG 구조를 활용하여 반려묘의 건강 데이터를 지능적으로 분석하고, 맞춤형 상담을 제공하는 AI 서비스입니다.  
-‘고양이’라는 도메인으로 범위를 제한함으로써, 해당 영역 내에서는 높은 품질의 응답과 안정적인 사용자 경험을 지향합니다.  
+'고양이'라는 도메인으로 범위를 제한함으로써, 해당 영역 내에서는 높은 품질의 응답과 안정적인 사용자 경험을 지향합니다.  
 보호자는 챗봇을 통해 식욕, 활동량, 배변 상태 등 다양한 건강 지표를 입력하고, 수의학적 조언을 받을 수 있습니다.  
 텍스트 입력뿐 아니라 혈액검사 결과, 처방전 이미지, 울음소리, 호흡수 동영상 등 다양한 형태의 데이터를 처리 대상으로 삼을 수 있습니다.  
-(영상, 음성 관련된 요소들은 과제기간 내 수행이 어려울 것으로 보입니다)  
 프롬프트 엔지니어링을 통해 사용자 입력을 정교하게 해석하고, 수의학 지식과 연결된 응답을 생성합니다.
+
+---
+
+## 📁 프로젝트 구조
+
+```
+meow-chat/
+├── 📂 app/                               # 메인 애플리케이션
+│   ├── 📄 __init__.py
+│   ├── 📄 main.py                        # FastAPI 앱 진입점
+│   │
+│   ├── 📂 api/                           # API 레이어
+│   │   ├── 📄 __init__.py
+│   │   ├── 📄 deps.py                    # 의존성 주입
+│   │   └── 📂 v1/
+│   │       ├── 📄 __init__.py
+│   │       ├── 📄 api.py                 # API 라우터 통합
+│   │       └── 📂 endpoints/
+│   │           ├── 📄 __init__.py
+│   │           ├── 📄 upload.py          # 이미지 업로드 엔드포인트
+│   │           ├── 📄 analysis.py        # 혈액검사 분석 엔드포인트
+│   │           ├── 📄 chat.py            # 채팅 대화 엔드포인트
+│   │           ├── 📄 memory.py          # 기억/기록 관리 엔드포인트
+│   │           └── 📄 health.py          # 헬스체크 엔드포인트
+│   │
+│   ├── 📂 core/                          # 핵심 설정 및 공통 모듈
+│   │   ├── 📄 __init__.py
+│   │   ├── 📄 config.py                  # 환경 설정 관리
+│   │   ├── 📄 security.py                # 보안/인증 관리
+│   │   ├── 📄 exceptions.py              # 커스텀 예외 정의
+│   │   └── 📄 logging.py                 # 로깅 설정
+│   │
+│   ├── 📂 models/                        # 데이터 모델 정의
+│   │   ├── 📄 __init__.py
+│   │   ├── 📄 blood_test.py              # 혈액검사 데이터 모델
+│   │   ├── 📄 analysis_result.py         # 분석 결과 모델
+│   │   ├── 📄 chat_history.py            # 채팅 기록 모델
+│   │   ├── 📄 cat_profile.py             # 고양이 프로필 모델
+│   │   ├── 📄 memory.py                  # 장기 기억 모델
+│   │   └── 📄 schemas.py                 # Pydantic 스키마
+│   │
+│   ├── 📂 services/                      # 비즈니스 로직 서비스
+│   │   ├── 📄 __init__.py
+│   │   │
+│   │   ├── 📂 ocr/                       # OCR 관련 서비스
+│   │   │   ├── 📄 __init__.py
+│   │   │   ├── 📄 paddle_ocr.py          # PaddleOCR 서비스
+│   │   │   ├── 📄 text_processor.py      # OCR 후처리
+│   │   │   └── 📄 image_enhancer.py      # 이미지 전처리
+│   │   │
+│   │   ├── 📂 analysis/                  # 분석 관련 서비스
+│   │   │   ├── 📄 __init__.py
+│   │   │   ├── 📄 blood_analyzer.py      # 혈액검사 분석 로직
+│   │   │   ├── 📄 reference_data.py      # 참조 데이터 관리
+│   │   │   ├── 📄 health_evaluator.py    # 건강 상태 평가
+│   │   │   └── 📄 langgraph_agent.py     # LangGraph 에이전트
+│   │   │
+│   │   ├── 📂 llm/                       # LLM 관련 서비스
+│   │   │   ├── 📄 __init__.py
+│   │   │   ├── 📄 openai_client.py       # OpenAI/LLM 클라이언트
+│   │   │   ├── 📄 prompt_templates.py    # 프롬프트 템플릿
+│   │   │   ├── 📄 persona_manager.py     # 페르소나 관리
+│   │   │   └── 📄 response_generator.py  # 응답 생성기
+│   │   │
+│   │   ├── 📂 memory/                    # 기억 관리 서비스
+│   │   │   ├── 📄 __init__.py
+│   │   │   ├── 📄 conversation_memory.py # 대화 기억 관리
+│   │   │   ├── 📄 health_memory.py       # 건강 기록 관리
+│   │   │   ├── 📄 long_term_memory.py    # 장기 기억 관리
+│   │   │   └── 📄 memory_retriever.py    # 기억 검색
+│   │   │
+│   │   ├── 📂 rag/                       # RAG 시스템
+│   │   │   ├── 📄 __init__.py
+│   │   │   ├── 📄 document_loader.py     # 문서 로더
+│   │   │   ├── 📄 embeddings.py          # 임베딩 관리
+│   │   │   ├── 📄 vector_store.py        # 벡터 스토어
+│   │   │   ├── 📄 retriever.py           # 정보 검색기
+│   │   │   └── 📄 knowledge_base.py      # 지식베이스 관리
+│   │   │
+│   │   └── 📂 chat/                      # 채팅 관련 서비스
+│   │       ├── 📄 __init__.py
+│   │       ├── 📄 conversation_manager.py # 대화 관리
+│   │       ├── 📄 intent_classifier.py   # 의도 분류
+│   │       ├── 📄 context_manager.py     # 맥락 관리
+│   │       └── 📄 response_formatter.py  # 응답 포맷팅
+│   │
+│   └── 📂 utils/                         # 유틸리티 함수
+│       ├── 📄 __init__.py
+│       ├── 📄 file_handler.py            # 파일 처리 유틸
+│       ├── 📄 image_processor.py         # 이미지 전처리
+│       ├── 📄 validators.py              # 검증 함수
+│       ├── 📄 text_utils.py              # 텍스트 처리 유틸
+│       └── 📄 date_utils.py              # 날짜 처리 유틸
+│
+├── 📂 tests/                             # 테스트 코드
+│   ├── 📄 __init__.py
+│   ├── 📄 conftest.py                    # pytest 설정
+│   ├── 📂 unit/                          # 단위 테스트
+│   │   ├── 📄 test_ocr.py
+│   │   ├── 📄 test_analysis.py
+│   │   ├── 📄 test_llm.py
+│   │   ├── 📄 test_memory.py
+│   │   └── 📄 test_chat.py
+│   └── 📂 integration/                   # 통합 테스트
+│       ├── 📄 test_api.py
+│       ├── 📄 test_workflow.py
+│       └── 📄 test_end_to_end.py
+│
+├── 📂 data/                              # 데이터 저장소
+│   ├── 📂 uploads/                       # 업로드된 이미지/파일
+│   ├── 📂 processed/                     # 처리된 데이터
+│   ├── 📂 reference/                     # 참조 데이터
+│   │   ├── 📄 blood_reference.json       # 혈액검사 참조값
+│   │   ├── 📄 cat_diseases.json          # 고양이 질병 정보
+│   │   └── 📄 symptoms_mapping.json      # 증상 매핑 데이터
+│   ├── 📂 knowledge_base/                # 지식베이스
+│   │   ├── 📂 veterinary_docs/           # 수의학 문서
+│   │   ├── 📂 medical_papers/            # 의학 논문
+│   │   └── 📂 guidelines/                # 가이드라인
+│   └── 📂 vectors/                       # 벡터 데이터베이스
+│
+├── 📂 logs/                              # 로그 파일
+│   ├── 📄 app.log                        # 애플리케이션 로그
+│   ├── 📄 error.log                      # 에러 로그
+│   └── 📄 chat.log                       # 채팅 로그
+│
+├── 📂 config/                            # 설정 파일
+│   ├── 📄 settings.yaml                  # 환경별 설정
+│   ├── 📄 prompts.yaml                   # 프롬프트 템플릿
+│   ├── 📄 persona_config.yaml            # 페르소나 설정
+│   └── 📄 workflow_config.yaml           # LangGraph 워크플로우 설정
+│
+├── 📂 scripts/                           # 스크립트
+│   ├── 📄 setup_db.py                    # 데이터베이스 초기화
+│   ├── 📄 load_knowledge.py              # 지식베이스 로딩
+│   ├── 📄 create_embeddings.py           # 임베딩 생성
+│   └── 📄 migrate_data.py                # 데이터 마이그레이션
+│
+├── 📂 docs/                              # 문서
+│   ├── 📄 API.md                         # API 문서
+│   ├── 📄 ARCHITECTURE.md                # 아키텍처 문서
+│   ├── 📄 DEPLOYMENT.md                  # 배포 가이드
+│   └── 📄 CONTRIBUTING.md                # 기여 가이드
+│
+├── 📂 notebooks/                         # Jupyter 노트북
+│   ├── 📄 __init__.py
+│   ├── 📄 ocr_test.ipynb                 # OCR 테스트
+│   ├── 📄 image_preprocessing.ipynb      # 이미지 전처리 실험
+│   ├── 📄 blood_analysis.ipynb           # 혈액검사 분석 실험
+│   ├── 📄 rag_experiment.ipynb           # RAG 시스템 실험
+│   ├── 📄 llm_testing.ipynb              # LLM 응답 테스트
+│   └── 📂 experiments/                   # 실험용 노트북들
+│       ├── 📄 ocr_parameter_tuning.ipynb
+│       ├── 📄 image_enhancement_comparison.ipynb
+│       └── 📄 model_evaluation.ipynb
+│
+├── 📄 requirements.txt                   # Python 의존성
+├── 📄 requirements-dev.txt               # 개발용 의존성
+├── 📄 .env.example                       # 환경변수 예시
+├── 📄 .env                               # 환경변수 (git ignore)
+├── 📄 .gitignore                         # Git 무시 파일
+├── 📄 Dockerfile                         # Docker 설정
+├── 📄 docker-compose.yml                 # 개발환경 구성
+├── 📄 pyproject.toml                     # 프로젝트 메타데이터
+└── 📄 README.md                          # 프로젝트 설명서
+```
 
 ---
 
 ## 🎭 챗봇 페르소나
 
-챗봇은 보호자가 기르는 고양이이자, 자신의 건강을 스스로 관리하는 ‘자기관리형 반려묘’ 페르소나를 갖습니다.  
+챗봇은 보호자가 기르는 고양이이자, 자신의 건강을 스스로 관리하는 '자기관리형 반려묘' 페르소나를 갖습니다.  
 친밀감과 전문성을 동시에 전달할 수 있도록 설계된 하이브리드 캐릭터입니다.
 
 - **정체성**: 보호자의 반려묘이자, 수의학 지식을 갖춘 디지털 주치의
@@ -35,9 +200,9 @@
 
 - **기억 기반 페르소나**  
   고양이의 병원 기록, 복약 내역, 행동 변화 등을 축적  
-  장기적인 “유대감” 형성 → 보호자가 "나의 고양이와 대화하는 느낌"을 받게 함
+  장기적인 "유대감" 형성 → 보호자가 "나의 고양이와 대화하는 느낌"을 받게 함
 
-- **단순 QA가 아닌 “동행형 AI”**  
+- **단순 QA가 아닌 "동행형 AI"**  
   → 보호자와 챗봇이 오랫동안 함께하는 구조 → 다른 반려동물 앱과 차별화
 
 - **정서적 유대감 + 전문성**  
@@ -64,7 +229,7 @@
 
 4. **데이터 기반 부가 가치**  
    - 반려묘 건강 데이터셋 축적 → 연구·보험·의료 협력 가능  
-   - “고양이 행동·질병 데이터베이스”로서 산업적 가치 창출
+   - "고양이 행동·질병 데이터베이스"로서 산업적 가치 창출
 
 ---
 
@@ -119,11 +284,11 @@
 
 ## 📚 기존 서비스 / 연구 사례
 
-- **Replika**: 감정적 동반자 역할을 하는 대표적인 AI 챗봇. 사용자의 대화 히스토리를 장기간 축적해 친밀한 관계 형성을 지향. → “유대감 기반 동행형 챗봇”의 대표 사례.  
+- **Replika**: 감정적 동반자 역할을 하는 대표적인 AI 챗봇. 사용자의 대화 히스토리를 장기간 축적해 친밀한 관계 형성을 지향. → "유대감 기반 동행형 챗봇"의 대표 사례.  
 - **Character.AI 연구 (2023~2024)**: 장기적 상호작용을 통해 사용자 정신적 웰빙에 미치는 영향 분석. AI와의 관계 형성이 지속 사용을 유도한다는 점을 보여줌.  
 - **MemoryBank (2023, arXiv)**: 대규모 언어모델에 장기 기억(long-term memory)을 부여하는 연구. 중요한 사건은 강화하고, 덜 중요한 기억은 요약·축소하는 메커니즘 제안.  
 - **Livia (2025, arXiv)**: 감정 인식(emotion-aware)과 성격(personality)의 진화를 통해 장기적인 관계를 만드는 AR 기반 AI 동반자.  
-- **반려동물 헬스케어 챗봇 연구 (2024)**: “AI Chatbots in Pet Health Care” 논문 등에서, 보호자 상담과 의료 정보 제공에 AI를 활용하는 기회와 도전을 제시. 아직 “생애 전 주기 동행형” 개념은 드물어 참신성이 높음.  
+- **반려동물 헬스케어 챗봇 연구 (2024)**: "AI Chatbots in Pet Health Care" 논문 등에서, 보호자 상담과 의료 정보 제공에 AI를 활용하는 기회와 도전을 제시. 아직 "생애 전 주기 동행형" 개념은 드물어 참신성이 높음.  
 
 ---
 
@@ -139,7 +304,7 @@
 
 3. **정서적 유대감 강화**  
    - 보호자의 입력에서 감정을 파악하고 공감적 응답 제공  
-   - “애교+전문성” 하이브리드 톤으로 지속적 관계 유지
+   - "애교+전문성" 하이브리드 톤으로 지속적 관계 유지
 
 4. **멀티모달 입력 확장**  
    - 텍스트 + 이미지(OCR) 우선 → 이후 음성(울음소리)·영상(호흡수/움직임) 분석 확장  
@@ -149,12 +314,12 @@
    - 예방접종 스케줄, 시기별 영양 가이드, 노령묘 질환 관리 등 단계별 체크리스트 제공
 
 6. **윤리적/신뢰성 고려**  
-   - 잘못된 의학적 조언 최소화(“정보 제공용, 수의사 상담 필요 시 안내” 명시)  
+   - 잘못된 의학적 조언 최소화("정보 제공용, 수의사 상담 필요 시 안내" 명시)  
    - 개인·의료 데이터 보호, 투명한 광고·커머스 연계 설계
 
 7. **수익 모델과 서비스 지속성의 연결**  
    - 유대감을 기반으로 커머스·보험·구독 모델 전환  
-   - 광고 삽입도 신뢰 저해가 되지 않도록 “추천”의 형태로 자연스럽게 구현
+   - 광고 삽입도 신뢰 저해가 되지 않도록 "추천"의 형태로 자연스럽게 구현
 
 ---
 
@@ -165,14 +330,9 @@
 - 실현 가능한 범위(텍스트+이미지)부터 시작 → 장기적으로 음성·영상까지 확장.  
 - 지속적인 사용자 유대감을 기반으로 커머스·보험·데이터 협력 등 다양한 수익 모델을 기대할 수 있음.
 
-
-
 ---
 
 ## 🤝 협업방안
 
 현재 Document Loaders, Embeddings, Vector Store, LangGraph 등 커리큘럼 핵심 주제를 포함하고 있습니다.
 팀원별로 OCR·데이터 로더, VectorDB·RAG 설계, LangGraph 워크플로우, Memory/Persona 설계를 분담합니다.
-
-
-
