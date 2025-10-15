@@ -51,6 +51,7 @@ gradio>=4.8.0                 # ML 데모
 # 🔧 OCR 개발 전용 도구
 pdf2image>=1.16.3             # PDF 변환
 labelme>=5.4.1                # 이미지 라벨링
+jsonpickle>=3.0.2             # JSON 직렬화 (numpy, 복잡 객체 지원)
 
 # 🚀 MLOps & 실험 추적
 wandb>=0.16.1                 # 실험 추적

@@ -9,11 +9,11 @@ License: Apache 2.0
 
 import cv2
 import numpy as np
-from typing import Union
 from paddleocr import PaddleOCR
-from app.utils.image_util import plt_imshow, put_text
+import jsonpickle
+import numpy as np
 
-class MyPaddleOCR:
+class PaddleOCRService:
     """
     PaddleOCR을 사용한 한국어 OCR 클래스
     
@@ -23,8 +23,6 @@ class MyPaddleOCR:
     Attributes:
         lang (str): 인식할 언어 설정 (기본값: "korean")
         _ocr (PaddleOCR): PaddleOCR 인스턴스
-        img_path (str): 처리된 이미지 경로
-        ocr_result (dict): OCR 결과 상세 정보
     """
     
     def __init__(self, lang: str = "korean", **kwargs):
@@ -39,9 +37,22 @@ class MyPaddleOCR:
         self.init_kwargs = kwargs.copy()  # 초기화에 사용된 추가 인자 저장
         
         # PaddleOCR 인스턴스 생성 (전달받은 모든 파라미터 사용)
-        self._ocr = PaddleOCR(lang=lang, **kwargs)
-        self.img_path = None  # 현재 처리 중인 이미지 경로
-        self.ocr_result = {}  # OCR 결과 상세 정보 저장
+        self._ocr_engine = PaddleOCR(
+            lang=self.lang, 
+            use_doc_orientation_classify=True, # 문서 방향 분류/교정 모델 로드
+            use_doc_unwarping=True,            # 문서 휘어짐 보정 
+            use_textline_orientation=True,     # 방향 분류 활성화
+            # text_det_thresh=0.2,               # 감지 임계값 
+            # text_rec_score_thresh=0.7,         # 인식 임계값 
+            # text_recognition_batch_size=1,     # 배치 크기 
+            # text_det_limit_side_len=1600,      # 이미지 크기 
+            # return_word_box=True,              # 단어별 박스 반환       
+
+            # text_det_unclip_ratio=2.5,         # 텍스트 박스 확장  
+            **kwargs
+        )
+
+        
     
     def get_available_langs(self):
         """
@@ -172,42 +183,6 @@ class MyPaddleOCR:
         
         print("\n" + "=" * 60)
         
-        # 2. PaddleOCR에서 이론적으로 지원하는 모델 버전
-        print("📚 PaddleOCR 지원 모델 버전:")
-        model_info = {
-            'PP-OCRv5': {
-                'languages': ['ch', 'en', 'korean', 'japan', 'chinese_cht', 'ta', 'te', 'ka', 'latin', 'arabic', 'cyrillic', 'devanagari'],
-                'status': '✅ 현재 사용 중',
-                'features': ['최고 정확도', '한국어 최적화', '모바일/서버 지원']
-            },
-            'PP-OCRv4': {
-                'languages': ['ch', 'en', 'korean', 'japan', 'chinese_cht'],
-                'status': '🔶 이전 버전',
-                'features': ['안정적 성능', '빠른 처리']
-            },
-            'PP-OCRv3': {
-                'languages': ['ch', 'en', 'korean', 'japan', 'chinese_cht', 'ta', 'te', 'ka', 'latin', 'arabic', 'cyrillic', 'devanagari'],
-                'status': '🔶 이전 버전',
-                'features': ['광범위한 언어 지원']
-            },
-            'PP-OCRv2': {
-                'languages': ['ch'],
-                'status': '🔸 레거시',
-                'features': ['중국어 전용']
-            }
-        }
-        
-        for idx, (model_name, info) in enumerate(model_info.items(), 1):
-            print(f"\n#{idx} {model_name} {info['status']}")
-            print(f"   🌍 지원 언어 ({len(info['languages'])}개): {info['languages'][:5]}{'...' if len(info['languages']) > 5 else ''}")
-            print(f"   ⭐ 특징: {', '.join(info['features'])}")
-        
-        print("\n" + "=" * 60)
-        print("💡 현재 설정:")
-        print(f"   📌 사용 중인 버전: PP-OCRv5")
-        print(f"   📌 주 사용 언어: {self.lang}")
-        print(f"   📌 모델 구성: 서버급 감지 + 모바일 최적화 인식")
-        
         return downloaded_models
     
     def get_current_model_info(self):
@@ -223,8 +198,8 @@ class MyPaddleOCR:
         # 실제 PaddleOCR 인스턴스에서 모델 정보 추출
         try:
             # _params에서 실제 설정된 모델명 추출
-            params = self._ocr._params
-            config = self._ocr._merged_paddlex_config
+            params = self._ocr_engine._params
+            config = self._ocr_engine._merged_paddlex_config
             
             # 실제 사용 중인 모델들
             detection_model = params.get('text_detection_model_name', 'Unknown')
@@ -331,225 +306,890 @@ class MyPaddleOCR:
         
         return model_info
         
-    def get_ocr_result(self):
+    def get_current_preprocessing_settings(self):
         """
-        마지막으로 실행된 OCR의 상세 결과를 반환합니다.
+        현재 PaddleOCR 인스턴스에 실제로 적용된 모든 전처리 설정을 출력합니다.
         
         Returns:
-            dict: OCR 결과 딕셔너리
-                - rec_texts: 인식된 텍스트 리스트
-                - rec_scores: 각 텍스트의 신뢰도 점수
-                - rec_polys: 각 텍스트의 좌표 정보
-                - 기타 메타데이터
+            dict: 현재 전처리 설정 정보
         """
-        return self.ocr_result
-
-    def get_img_path(self):
-        """
-        현재 처리 중인 이미지 경로를 반환합니다.
+        print("🔧 현재 PaddleOCR 인스턴스의 전처리 설정 (실제 적용됨)")
+        print("=" * 70)
         
-        Returns:
-            str: 이미지 파일 경로
-        """
-        return self.img_path
-
-    def show_img(self):
-        """
-        현재 이미지를 matplotlib을 사용하여 화면에 표시합니다.
+        preprocessing_settings = {}
         
-        Note:
-            utils.image_util.plt_imshow 함수를 사용합니다.
+        try:
+            # PaddleOCR 인스턴스에서 실제 설정 추출
+            params = self._ocr_engine._params
+            config = self._ocr_engine._merged_paddlex_config
+            sub_modules = config.get('SubModules', {})
+            sub_pipelines = config.get('SubPipelines', {})
+            
+            # 1. 기본 시스템 설정
+            system_settings = {
+                'language': self.lang,
+                'pipeline_name': config.get('pipeline_name', 'OCR'),
+                'text_type': config.get('text_type', 'general'),
+                'use_gpu': params.get('use_gpu', True),
+                'gpu_id': params.get('gpu_id', 0),
+                'cpu_threads': params.get('cpu_threads', 10),
+                'enable_mkldnn': params.get('enable_mkldnn', True),
+                'warmup': params.get('warmup', True),
+                'show_log': params.get('show_log', False)
+            }
+            preprocessing_settings['system'] = system_settings
+            
+            print("🖥️  시스템 설정:")
+            print(f"   언어: {system_settings['language']}")
+            print(f"   파이프라인: {system_settings['pipeline_name']}")
+            print(f"   텍스트 유형: {system_settings['text_type']}")
+            print(f"   GPU 사용: {'✅' if system_settings['use_gpu'] else '❌'}")
+            print(f"   GPU ID: {system_settings['gpu_id']}")
+            print(f"   CPU 스레드: {system_settings['cpu_threads']}")
+            print(f"   MKLDNN 최적화: {'✅' if system_settings['enable_mkldnn'] else '❌'}")
+            print(f"   모델 워밍업: {'✅' if system_settings['warmup'] else '❌'}")
+            print(f"   로그 출력: {'✅' if system_settings['show_log'] else '❌'}")
+            
+            # 2. 텍스트 감지 전처리 설정
+            detection_settings = {}
+            if 'TextDetection' in sub_modules:
+                det_config = sub_modules['TextDetection']
+                detection_settings = {
+                    'model_name': det_config.get('model_name', 'Unknown'),
+                    'thresh': det_config.get('thresh', 0.3),
+                    'box_thresh': det_config.get('box_thresh', 0.6),
+                    'unclip_ratio': det_config.get('unclip_ratio', 1.5),
+                    'max_side_len': det_config.get('max_side_len', 960),
+                    'limit_type': det_config.get('limit_type', 'max'),
+                    'use_dilation': det_config.get('use_dilation', True),
+                    'score_mode': det_config.get('score_mode', 'fast'),
+                    'polygon': det_config.get('polygon', False),
+                    'visualize': det_config.get('visualize', False)
+                }
+                preprocessing_settings['detection'] = detection_settings
+                
+                print(f"\n🔍 텍스트 감지 전처리:")
+                print(f"   모델: {detection_settings['model_name']}")
+                print(f"   감지 임계값: {detection_settings['thresh']}")
+                print(f"   박스 임계값: {detection_settings['box_thresh']}")
+                print(f"   언클립 비율: {detection_settings['unclip_ratio']}")
+                print(f"   최대 변 길이: {detection_settings['max_side_len']}px")
+                print(f"   크기 제한 방식: {detection_settings['limit_type']}")
+                print(f"   팽창 연산: {'✅' if detection_settings['use_dilation'] else '❌'}")
+                print(f"   점수 계산 모드: {detection_settings['score_mode']}")
+                print(f"   다각형 감지: {'✅' if detection_settings['polygon'] else '❌'}")
+                print(f"   시각화: {'✅' if detection_settings['visualize'] else '❌'}")
+            
+            # 3. 텍스트 인식 전처리 설정
+            recognition_settings = {}
+            if 'TextRecognition' in sub_modules:
+                rec_config = sub_modules['TextRecognition']
+                recognition_settings = {
+                    'model_name': rec_config.get('model_name', 'Unknown'),
+                    'batch_size': rec_config.get('batch_size', 6),
+                    'score_thresh': rec_config.get('score_thresh', 0.5),
+                    'max_text_length': rec_config.get('max_text_length', 25),
+                    'image_shape': rec_config.get('image_shape', [3, 48, 320]),
+                    'use_space_char': rec_config.get('use_space_char', True),
+                    'limited_max_width': rec_config.get('limited_max_width', 1280),
+                    'limited_min_width': rec_config.get('limited_min_width', 16),
+                    'char_dict_path': rec_config.get('char_dict_path', None),
+                    'visualize': rec_config.get('visualize', False)
+                }
+                preprocessing_settings['recognition'] = recognition_settings
+                
+                print(f"\n📝 텍스트 인식 전처리:")
+                print(f"   모델: {recognition_settings['model_name']}")
+                print(f"   배치 크기: {recognition_settings['batch_size']}")
+                print(f"   점수 임계값: {recognition_settings['score_thresh']}")
+                print(f"   최대 텍스트 길이: {recognition_settings['max_text_length']}")
+                print(f"   이미지 크기: {recognition_settings['image_shape']}")
+                print(f"   공백 문자 사용: {'✅' if recognition_settings['use_space_char'] else '❌'}")
+                print(f"   최대 너비 제한: {recognition_settings['limited_max_width']}px")
+                print(f"   최소 너비 제한: {recognition_settings['limited_min_width']}px")
+                print(f"   문자 사전: {recognition_settings['char_dict_path'] or '기본값'}")
+                print(f"   시각화: {'✅' if recognition_settings['visualize'] else '❌'}")
+            
+            # 4. 텍스트 방향 분류 전처리 설정
+            orientation_settings = {}
+            if 'TextLineOrientation' in sub_modules:
+                ori_config = sub_modules['TextLineOrientation']
+                orientation_settings = {
+                    'model_name': ori_config.get('model_name', 'Unknown'),
+                    'score_thresh': ori_config.get('score_thresh', 0.9),
+                    'batch_size': ori_config.get('batch_size', 6),
+                    'image_shape': ori_config.get('image_shape', [3, 48, 192]),
+                    'label_list': ori_config.get('label_list', ['0', '180']),
+                    'visualize': ori_config.get('visualize', False)
+                }
+                preprocessing_settings['orientation'] = orientation_settings
+                
+                print(f"\n📐 텍스트 방향 분류 전처리:")
+                print(f"   모델: {orientation_settings['model_name']}")
+                print(f"   분류 임계값: {orientation_settings['score_thresh']}")
+                print(f"   배치 크기: {orientation_settings['batch_size']}")
+                print(f"   이미지 크기: {orientation_settings['image_shape']}")
+                print(f"   지원 각도: {orientation_settings['label_list']}")
+                print(f"   시각화: {'✅' if orientation_settings['visualize'] else '❌'}")
+            else:
+                print(f"\n📐 텍스트 방향 분류 전처리: ❌ 비활성화")
+            
+            # 5. 문서 전처리 설정 (고급)
+            doc_preprocessing_settings = {}
+            if 'DocPreprocessor' in sub_pipelines:
+                doc_preprocessor = sub_pipelines['DocPreprocessor']
+                doc_sub_modules = doc_preprocessor.get('SubModules', {})
+                
+                doc_preprocessing_settings['enabled'] = True
+                doc_preprocessing_settings['modules'] = {}
+                
+                print(f"\n📄 문서 전처리 (고급 기능):")
+                
+                # 문서 방향 분류
+                if 'DocOrientationClassify' in doc_sub_modules:
+                    doc_ori_config = doc_sub_modules['DocOrientationClassify']
+                    doc_ori_settings = {
+                        'model_name': doc_ori_config.get('model_name', 'Unknown'),
+                        'score_thresh': doc_ori_config.get('score_thresh', 0.9),
+                        'batch_size': doc_ori_config.get('batch_size', 1)
+                    }
+                    doc_preprocessing_settings['modules']['orientation'] = doc_ori_settings
+                    
+                    print(f"   🔄 문서 방향 분류:")
+                    print(f"      모델: {doc_ori_settings['model_name']}")
+                    print(f"      임계값: {doc_ori_settings['score_thresh']}")
+                    print(f"      배치 크기: {doc_ori_settings['batch_size']}")
+                
+                # 문서 교정 (언워핑)
+                if 'DocUnwarping' in doc_sub_modules:
+                    doc_unwarp_config = doc_sub_modules['DocUnwarping']
+                    doc_unwarp_settings = {
+                        'model_name': doc_unwarp_config.get('model_name', 'Unknown'),
+                        'batch_size': doc_unwarp_config.get('batch_size', 1)
+                    }
+                    doc_preprocessing_settings['modules']['unwarping'] = doc_unwarp_settings
+                    
+                    print(f"   📐 문서 교정 (언워핑):")
+                    print(f"      모델: {doc_unwarp_settings['model_name']}")
+                    print(f"      배치 크기: {doc_unwarp_settings['batch_size']}")
+                
+                preprocessing_settings['document'] = doc_preprocessing_settings
+            else:
+                print(f"\n📄 문서 전처리: ❌ 비활성화 (일반 모드)")
+                preprocessing_settings['document'] = {'enabled': False}
+            
+            # 6. 이미지 입력 전처리 설정 (추론)
+            image_preprocessing = {
+                'auto_resize': True,
+                'max_side_len': detection_settings.get('max_side_len', 960),
+                'normalize': True,
+                'channel_order': 'BGR',
+                'data_type': 'float32',
+                'interpolation': 'LANCZOS',
+                'padding': False
+            }
+            preprocessing_settings['image'] = image_preprocessing
+            
+            print(f"\n🖼️  이미지 입력 전처리 (추론됨):")
+            print(f"   자동 크기 조정: {'✅' if image_preprocessing['auto_resize'] else '❌'}")
+            print(f"   최대 변 길이: {image_preprocessing['max_side_len']}px")
+            print(f"   정규화: {'✅' if image_preprocessing['normalize'] else '❌'}")
+            print(f"   채널 순서: {image_preprocessing['channel_order']}")
+            print(f"   데이터 타입: {image_preprocessing['data_type']}")
+            print(f"   보간법: {image_preprocessing['interpolation']}")
+            print(f"   패딩: {'✅' if image_preprocessing['padding'] else '❌'}")
+            
+            # 7. 초기화 시 사용된 커스텀 옵션들
+            custom_settings = {}
+            if self.init_kwargs:
+                custom_settings = self.init_kwargs.copy()
+                preprocessing_settings['custom'] = custom_settings
+                
+                print(f"\n⚙️  초기화 시 커스텀 설정:")
+                for key, value in custom_settings.items():
+                    print(f"   {key}: {value}")
+            else:
+                print(f"\n⚙️  초기화 시 커스텀 설정: ❌ 모든 기본값 사용")
+            
+            # 8. 파이프라인 플로우 요약
+            print(f"\n🔄 전처리 파이프라인 플로우:")
+            
+            flow_steps = []
+            flow_steps.append("1. 이미지 로드 및 크기 조정")
+            
+            if preprocessing_settings['document']['enabled']:
+                if 'orientation' in preprocessing_settings['document']['modules']:
+                    flow_steps.append("2. 문서 방향 분류")
+                if 'unwarping' in preprocessing_settings['document']['modules']:
+                    flow_steps.append("3. 문서 교정 (언워핑)")
+            
+            flow_steps.append(f"{len(flow_steps)+1}. 텍스트 감지 ({detection_settings.get('model_name', 'Unknown')})")
+            
+            if 'orientation' in preprocessing_settings:
+                flow_steps.append(f"{len(flow_steps)+1}. 텍스트 방향 분류")
+            
+            flow_steps.append(f"{len(flow_steps)+1}. 텍스트 인식 ({recognition_settings.get('model_name', 'Unknown')})")
+            flow_steps.append(f"{len(flow_steps)+1}. 결과 후처리 및 필터링")
+            
+            for step in flow_steps:
+                print(f"   {step}")
+            
+            # 9. 성능 특성 분석
+            print(f"\n📊 성능 특성 분석:")
+            
+            # 모델 조합 분석
+            det_model = detection_settings.get('model_name', '')
+            rec_model = recognition_settings.get('model_name', '')
+            
+            is_server_det = 'server' in det_model.lower()
+            is_mobile_rec = 'mobile' in rec_model.lower()
+            has_doc_processing = preprocessing_settings['document']['enabled']
+            has_orientation = 'orientation' in preprocessing_settings
+            
+            print(f"   모델 조합: {'서버급' if is_server_det else '모바일'} 감지 + {'모바일' if is_mobile_rec else '서버급'} 인식")
+            print(f"   처리 속도: {'⚡ 고속' if is_mobile_rec else '🎯 고정확도'}")
+            print(f"   메모리 사용: {'💾 적음' if is_mobile_rec else '💿 많음'}")
+            print(f"   문서 지원: {'✅ 고급' if has_doc_processing else '❌ 기본'}")
+            print(f"   방향 보정: {'✅ 지원' if has_orientation else '❌ 미지원'}")
+            print(f"   배치 처리: 감지({detection_settings.get('batch_size', 'N/A')}), 인식({recognition_settings.get('batch_size', 'N/A')})")
+            
+            # 신뢰도 설정 분석
+            det_thresh = detection_settings.get('thresh', 0.3)
+            rec_thresh = recognition_settings.get('score_thresh', 0.5)
+            
+            print(f"\n🎯 신뢰도 설정 분석:")
+            print(f"   감지 민감도: {'높음' if det_thresh <= 0.3 else '보통' if det_thresh <= 0.5 else '낮음'} (임계값: {det_thresh})")
+            print(f"   인식 필터링: {'엄격' if rec_thresh >= 0.7 else '보통' if rec_thresh >= 0.5 else '관대'} (임계값: {rec_thresh})")
+            
+            overall_quality = "균형" if (det_thresh <= 0.4 and rec_thresh >= 0.5) else \
+                            "고품질" if (det_thresh <= 0.3 and rec_thresh >= 0.7) else \
+                            "고속도" if (det_thresh >= 0.4 and rec_thresh <= 0.4) else "커스텀"
+            print(f"   전체 설정: {overall_quality}")
+            
+        except Exception as e:
+            print(f"❌ 전처리 설정 추출 실패: {e}")
+            preprocessing_settings = {
+                'error': str(e),
+                'fallback': {
+                    'language': self.lang,
+                    'custom_options': self.init_kwargs
+                }
+            }
+            print(f"📌 기본 정보만 표시: 언어={self.lang}, 커스텀 옵션={len(self.init_kwargs)}개")
+        
+        return preprocessing_settings
+
+
+
+    def run_ocr_from_path(self, file_path: str) -> list[dict] | None:
         """
-        plt_imshow(img=self.img_path)
-    
-    def run_ocr(self, img_input: Union[str, np.ndarray], debug: bool = False):
-        """
-        이미지에서 텍스트를 인식하는 OCR을 실행합니다.
+        파일 경로에서 OCR을 실행하고 원본 결과를 반환합니다.
         
         Args:
-            img_input (Union[str, np.ndarray]): 
-                - str: 분석할 이미지 파일 경로
-                - np.ndarray: OpenCV 이미지 배열 (BGR 형식)
-            debug (bool): 디버그 모드 활성화 여부 (기본값: False)
-                         True일 경우 인식된 텍스트와 신뢰도를 출력합니다.
-        
-        Returns:
-            list: 인식된 텍스트 리스트
-                 예: ['아래한글 한글문서', '디자인', '2022.04']
-        
-        Note:
-            - 결과는 self.ocr_result에도 저장됩니다 (상세 정보 포함)
-            - PaddleOCR의 최신 predict() API를 사용합니다
-            - numpy 배열과 파일 경로 모두 지원합니다
-        """
-        # 입력 타입에 따른 처리
-        if isinstance(img_input, str):
-            # 파일 경로인 경우
-            self.img_path = img_input
-            input_source = img_input
-            if debug:
-                print(f"📁 파일에서 OCR 실행: {img_input}")
-        elif isinstance(img_input, np.ndarray):
-            # numpy 배열인 경우
-            self.img_path = "memory_image"  # 메모리 이미지 표시
-            input_source = img_input
-            if debug:
-                print(f"💾 메모리에서 OCR 실행: shape={img_input.shape}, dtype={img_input.dtype}")
-        else:
-            raise ValueError(f"지원하지 않는 입력 타입: {type(img_input)}. str 또는 np.ndarray만 지원합니다.")
-        
-        ocr_text = []  # 인식된 텍스트를 저장할 리스트
-        
-        # PaddleOCR 최신 버전 API 사용
-        try:
-            # PaddleOCR predict 메서드 호출 (파일 경로와 numpy 배열 모두 지원)
-            result = self._ocr.predict(input_source)
+            file_path (str): 이미지 파일 경로
             
-            # 결과가 리스트이고 첫 번째 요소에 데이터가 있는 경우
-            if result and isinstance(result, list) and len(result) > 0:
-                page_result = result[0]  # 첫 번째 페이지 결과 추출
-                
-                # 결과에 텍스트 정보가 있는지 확인
-                if isinstance(page_result, dict) and 'rec_texts' in page_result:
-                    # 상세 결과를 객체에 저장
-                    self.ocr_result = page_result
-                    # 텍스트만 추출
-                    ocr_text = page_result['rec_texts']
-                    
-                    # 디버그 모드일 경우 결과 출력
-                    if debug:
-                        input_type = "파일" if isinstance(img_input, str) else "메모리"
-                        print(f"✅ {input_type} OCR 완료:")
-                        print(f"   📝 인식된 텍스트 ({len(ocr_text)}개): {ocr_text}")
-                        if 'rec_scores' in page_result:
-                            scores = page_result['rec_scores']
-                            print(f"   📊 신뢰도: {[f'{score:.4f}' for score in scores]}")
-                        if 'rec_polys' in page_result:
-                            polys = page_result['rec_polys']
-                            print(f"   📍 좌표 정보: {len(polys)}개 영역")
-                else:
-                    # 텍스트 정보가 없는 경우
-                    self.ocr_result = {}
-                    ocr_text = ["텍스트를 찾을 수 없습니다."]
-                    if debug:
-                        print("⚠️ OCR 결과에 텍스트 정보가 없습니다.")
-            else:
-                # 결과가 비어있는 경우
-                self.ocr_result = {}
-                ocr_text = ["OCR 결과가 비어있습니다."]
-                if debug:
-                    print("⚠️ OCR 결과가 비어있습니다.")
-                
-        except Exception as e:
-            # OCR 실행 중 오류 발생
-            print(f"❌ OCR 실행 중 오류: {e}")
-            self.ocr_result = {}
-            ocr_text = ["OCR 실행 실패"]
-
-        return ocr_text
-    
-    def run_ocr_from_bytes(self, image_bytes: bytes, debug: bool = False):
+        Returns:
+            list[dict] | None: PaddleOCR 원본 결과 (성공시 OCRResult 딕셔너리 리스트, 실패시 None)
         """
-        바이트 데이터에서 직접 OCR을 실행합니다.
+        try:
+            # PaddleOCR 원본 결과 반환
+            result = self._ocr_engine.predict(file_path)
+            # print(f"result: {result}")
+
+            return result
+            
+        except Exception as e:
+            print(f"❌ 파일 OCR 실패: {e}")
+            return None
+    
+    def run_ocr_from_nparray(self, image_array: np.ndarray) -> list[dict] | None:
+        """
+        numpy 배열에서 OCR을 실행하고 원본 결과를 반환합니다.
+        
+        Args:
+            image_array (np.ndarray): OpenCV 이미지 배열 (BGR 형식)
+            
+        Returns:
+            list[dict] | None: PaddleOCR 원본 결과 (성공시 OCRResult 딕셔너리 리스트, 실패시 None)
+        """
+        try:
+            # PaddleOCR 원본 결과 반환
+            result = self._ocr_engine.predict(image_array)
+            return result
+            
+        except Exception as e:
+            print(f"❌ 배열 OCR 실패: {e}")
+            return None
+    
+    def run_ocr_from_bytes(self, image_bytes: bytes) -> list[dict] | None:
+        """
+        바이트 데이터에서 OCR을 실행하고 원본 결과를 반환합니다.
         
         Args:
             image_bytes (bytes): 이미지 파일의 바이트 데이터
-            debug (bool): 디버그 모드
             
         Returns:
-            list: 인식된 텍스트 리스트
+            list[dict] | None: PaddleOCR 원본 결과 (성공시 OCRResult 딕셔너리 리스트, 실패시 None)
         """
         try:
             # 바이트 데이터를 numpy 배열로 변환
             nparr = np.frombuffer(image_bytes, np.uint8)
             cv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
-            if cv_image is None:
-                raise ValueError("이미지 디코딩 실패")
-            
-            if debug:
-                print(f"🔄 바이트 데이터 변환 완료: {cv_image.shape}")
-            
-            # numpy 배열로 OCR 실행
-            return self.run_ocr(cv_image, debug=debug)
+            # numpy 배열로 OCR 실행 (재귀 호출)
+            return self.run_ocr_from_nparray(cv_image)
             
         except Exception as e:
             print(f"❌ 바이트 데이터 OCR 실패: {e}")
-            return ["바이트 데이터 처리 실패"]
-        
-    def show_img_with_ocr(self):
+            return None
+
+
+
+
+    def extract_text_with_confidence(self, ocr_result) -> list[dict[str, str | float | None]]:
         """
-        OCR 결과를 이미지 위에 시각화하여 표시합니다.
-        
-        인식된 텍스트 영역을 녹색 사각형으로 표시하고,
-        각 영역 위에 인식된 텍스트를 표시합니다.
-        
-        Note:
-            - OpenCV를 사용하여 이미지 처리
-            - matplotlib을 통해 원본과 결과 이미지를 나란히 표시
-            - 현재 버전에서는 draw_ocr 의존성 문제로 비활성화됨
-        """
-        # 이미지 읽기
-        img = cv2.imread(self.img_path)
-        roi_img = img.copy()  # 결과 표시용 이미지 복사
-
-        # OCR 결과의 각 텍스트 영역에 대해 처리
-        for text_result in self.ocr_result:
-            text = text_result[1][0]  # 인식된 텍스트
-            
-            # 텍스트 영역의 4개 꼭지점 좌표 추출
-            tlX = int(text_result[0][0][0])  # Top-Left X
-            tlY = int(text_result[0][0][1])  # Top-Left Y
-            trX = int(text_result[0][1][0])  # Top-Right X
-            trY = int(text_result[0][1][1])  # Top-Right Y
-            brX = int(text_result[0][2][0])  # Bottom-Right X
-            brY = int(text_result[0][2][1])  # Bottom-Right Y
-            blX = int(text_result[0][3][0])  # Bottom-Left X
-            blY = int(text_result[0][3][1])  # Bottom-Left Y
-
-            # 4개 꼭지점 좌표 튜플로 정리
-            pts = ((tlX, tlY), (trX, trY), (brX, brY), (blX, blY))
-            topLeft = pts[0]
-            topRight = pts[1]
-            bottomRight = pts[2]
-            bottomLeft = pts[3]
-
-            # 텍스트 영역을 녹색 사각형으로 표시
-            cv2.line(roi_img, topLeft, topRight, (0, 255, 0), 2)
-            cv2.line(roi_img, topRight, bottomRight, (0, 255, 0), 2)
-            cv2.line(roi_img, bottomRight, bottomLeft, (0, 255, 0), 2)
-            cv2.line(roi_img, bottomLeft, topLeft, (0, 255, 0), 2)
-            
-            # 텍스트 영역 위에 인식된 텍스트 표시
-            roi_img = put_text(roi_img, text, topLeft[0], topLeft[1] - 20, font_size=15)
-
-        # 원본 이미지와 OCR 결과 이미지를 나란히 표시
-        plt_imshow(["Original", "ROI"], [img, roi_img], figsize=(16, 10))
-
-    def show_img(self):
-        """
-        현재 이미지를 matplotlib을 사용하여 화면에 표시합니다.
-        
-        Note:
-            메모리 이미지인 경우 표시할 수 없습니다.
-        """
-        if self.img_path == "memory_image":
-            print("⚠️ 메모리 이미지는 show_img()로 표시할 수 없습니다.")
-            print("💡 대신 run_ocr 실행 시 numpy 배열을 직접 사용하세요.")
-        else:
-            plt_imshow(img=self.img_path)
-
-    def save_memory_image(self, output_path: str, image_array: np.ndarray = None):
-        """
-        메모리에 있는 이미지를 파일로 저장합니다.
+        OCR 결과에서 텍스트와 신뢰도를 추출하여 리스트로 반환
         
         Args:
-            output_path (str): 저장할 파일 경로
-            image_array (np.ndarray, optional): 저장할 이미지 배열
-                                                None인 경우 마지막 처리된 이미지 사용
+            ocr_result: OCR 결과 객체 또는 딕셔너리
+            
+        Returns:
+            list[dict[str, str | float | None]]: [{"text": str, "confidence": float | None}, ...] 형태의 리스트
+            데이터 무결성 오류 시 빈 리스트 반환
         """
-        if image_array is not None:
-            cv2.imwrite(output_path, image_array)
-            print(f"✅ 이미지 저장 완료: {output_path}")
+        # rec_texts 속성 확인
+        if hasattr(ocr_result, 'rec_texts'):
+            rec_texts = ocr_result.rec_texts
+        elif isinstance(ocr_result, dict) and 'rec_texts' in ocr_result:
+            rec_texts = ocr_result['rec_texts']
         else:
-            print("❌ 저장할 이미지 배열이 없습니다.")
+            print("❌ rec_texts를 찾을 수 없습니다.")
+            return []
+        
+        # rec_scores 속성 확인 (한 번만)
+        rec_scores = None
+        if hasattr(ocr_result, 'rec_scores'):
+            rec_scores = ocr_result.rec_scores
+        elif isinstance(ocr_result, dict) and 'rec_scores' in ocr_result:
+            rec_scores = ocr_result['rec_scores']
+        else:
+            print("❌ rec_scores를 찾을 수 없습니다.")
+            return []
+        
+        # rec_texts와 rec_scores 길이가 같다면 zip으로 함께 처리
+        if rec_scores and len(rec_texts) == len(rec_scores):
+            # 결과 리스트 생성
+            result_list = []
+            for text, confidence in zip(rec_texts, rec_scores):
+                result_list.append({
+                    "text": text,
+                    "confidence": round(float(confidence), 2)
+                })
+            return result_list    
+        else:
+            # 길이가 다르거나 rec_scores가 없으면 [] 반환
+            return []
+
+    def convert_to_json(self, result, pretty: bool = True):
+        """jsonpickle을 사용한 JSON 변환"""
+        try:
+            # jsonpickle은 numpy 배열, 복잡한 객체 모두 처리
+            json_string = jsonpickle.encode(
+                result, 
+                unpicklable=False,  # 순수 JSON만 생성
+                make_refs=False     # 참조 제거
+            )
+            
+            if pretty:
+                import json
+                parsed = json.loads(json_string)
+                return json.dumps(parsed, indent=2, ensure_ascii=False)
+            
+            return json_string
+            
+        except Exception as e:
+            print(f"❌ jsonpickle 변환 실패: {e}")
+            return json.dumps({"error": str(e)})
+
+    def convert_to_structured_json(self, result, pretty: bool = True):
+        """
+        OCR 결과를 텍스트별로 구조화된 JSON으로 변환
+        
+        Args:
+            result: run_ocr_from_* 메서드의 반환값
+            pretty (bool): 들여쓰기 적용 여부
+            
+        Returns:
+            str: 구조화된 JSON 문자열
+            
+        Example:
+            [
+                {
+                    "rec_text": "안녕하세요",
+                    "rec_score": 0.9876,
+                    "rec_poly": [[100, 50], [200, 50], [200, 80], [100, 80]],
+                    "dt_poly": [[99.5, 49.8], [201.2, 50.1], [200.9, 80.3], [99.7, 79.9]],
+                    "dt_score": 0.9543,
+                    "ori_poly": [[100, 50], [200, 50], [200, 80], [100, 80]],
+                    "ori_scores": 0.9234
+                },
+                ...
+            ]
+        """
+        try:
+            if not result or len(result) == 0:
+                return "[]"
+            
+            page_result = result[0]
+            
+            # PaddleOCR 3.2.0 결과 구조 처리
+            if isinstance(page_result, dict):
+                texts = page_result.get('rec_texts', [])
+                rec_scores = page_result.get('rec_scores', [])
+                rec_polys = page_result.get('rec_polys', [])
+                dt_polys = page_result.get('dt_polys', [])
+                dt_scores = page_result.get('dt_scores', [])
+                ori_polys = page_result.get('ori_polys', [])
+                ori_scores = page_result.get('ori_scores', [])
+            else:
+                # 구버전 호환성: [[좌표, (텍스트, 신뢰도)], ...]
+                texts = []
+                rec_scores = []
+                rec_polys = []
+                dt_polys = []
+                dt_scores = []
+                ori_polys = []
+                ori_scores = []
+                
+                for item in page_result:
+                    if len(item) >= 2:
+                        dt_polys.append(item[0])
+                        rec_polys.append(item[0])  # 구버전에서는 동일
+                        if isinstance(item[1], tuple):
+                            texts.append(item[1][0])
+                            rec_scores.append(item[1][1])
+                        else:
+                            texts.append(str(item[1]))
+                            rec_scores.append(0.0)
+                        
+                        # 구버전에서는 추가 정보가 없으므로 기본값
+                        dt_scores.append(0.0)
+                        ori_polys.append(item[0])
+                        ori_scores.append(0.0)
+            
+            # 텍스트별 구조화된 데이터 생성
+            structured_data = []
+            
+            # 모든 배열의 최대 길이 계산
+            max_length = max(
+                len(texts), len(rec_scores), len(rec_polys),
+                len(dt_polys), len(dt_scores), len(ori_polys), len(ori_scores)
+            )
+            
+            for i in range(max_length):
+                # 각 필드에서 안전하게 값 추출 (인덱스가 없으면 기본값)
+                text_item = {
+                    "rec_text": texts[i] if i < len(texts) else "",
+                    "rec_score": float(rec_scores[i]) if i < len(rec_scores) else 0.0,
+                    "rec_poly": self._convert_poly_to_list(rec_polys[i]) if i < len(rec_polys) else [],
+                    "dt_poly": self._convert_poly_to_list(dt_polys[i]) if i < len(dt_polys) else [],
+                    "dt_score": float(dt_scores[i]) if i < len(dt_scores) else 0.0,
+                    "ori_poly": self._convert_poly_to_list(ori_polys[i]) if i < len(ori_polys) else [],
+                    "ori_scores": float(ori_scores[i]) if i < len(ori_scores) else 0.0
+                }
+                
+                structured_data.append(text_item)
+            
+            # JSON 문자열로 변환
+            import json
+            if pretty:
+                return json.dumps(structured_data, indent=2, ensure_ascii=False)
+            else:
+                return json.dumps(structured_data, ensure_ascii=False)
+                
+        except Exception as e:
+            print(f"❌ 구조화된 JSON 변환 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+    
+    def _convert_poly_to_list(self, poly):
+        """
+        다양한 형태의 좌표 데이터를 리스트로 변환
+        
+        Args:
+            poly: numpy 배열, 리스트, 또는 기타 좌표 데이터
+            
+        Returns:
+            list: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]] 형태의 리스트
+        """
+        try:
+            if poly is None:
+                return []
+            
+            # numpy 배열인 경우
+            if isinstance(poly, np.ndarray):
+                # 1차원 배열을 2차원으로 변환 (8개 값 → 4x2)
+                if poly.ndim == 1 and len(poly) == 8:
+                    poly = poly.reshape(4, 2)
+                
+                # 2차원 배열을 리스트로 변환
+                if poly.ndim == 2:
+                    return [[float(x), float(y)] for x, y in poly]
+                else:
+                    return poly.tolist()
+            
+            # 이미 리스트인 경우
+            elif isinstance(poly, list):
+                # 평면 리스트 [x1, y1, x2, y2, ...] → [[x1, y1], [x2, y2], ...]
+                if len(poly) == 8 and all(isinstance(x, (int, float)) for x in poly):
+                    return [[float(poly[i]), float(poly[i+1])] for i in range(0, 8, 2)]
+                # 이미 올바른 형태인 경우
+                elif len(poly) > 0 and isinstance(poly[0], (list, tuple)):
+                    return [[float(x), float(y)] for x, y in poly]
+                else:
+                    return poly
+            
+            # 기타 형태인 경우 문자열로 변환 후 파싱 시도
+            else:
+                return str(poly)
+                
+        except Exception as e:
+            print(f"⚠️ 좌표 변환 실패: {e}")
+            return []
+
+
+    def _x_extract_reference_words_simple(self, result, left_region_ratio=0.10, confidence_threshold=0.3, min_word_length=2):
+        """
+        간단한 왼쪽 영역 필터링을 통한 기준단어 추출
+        
+        rec_polys의 left 값이 문서 너비의 10% 이내에 있는 텍스트들만 필터링합니다.
+        """
+        if not result or len(result) == 0:
+            print("❌ OCR 결과가 없습니다.")
+            return []
+        
+        try:
+            page_result = result[0]
+            
+            # PaddleOCR 3.2.0 결과 구조 처리 - rec_polys 사용
+            if isinstance(page_result, dict):
+                texts = page_result.get('rec_texts', [])
+                scores = page_result.get('rec_scores', [])
+                polys = page_result.get('rec_polys', [])
+                print("🔍 사용 좌표: rec_polys (정규화된 위치)")
+            else:
+                # 구버전 호환성
+                texts = []
+                scores = []
+                polys = []
+                for item in page_result:
+                    if len(item) >= 2:
+                        polys.append(item[0])
+                        if isinstance(item[1], tuple):
+                            texts.append(item[1][0])
+                            scores.append(item[1][1])
+                        else:
+                            texts.append(str(item[1]))
+                            scores.append(0.0)
+            
+            if not texts or not polys:
+                print("❌ 인식된 텍스트나 좌표 정보가 없습니다.")
+                return []
+            
+            # 문서 너비 계산
+            all_x_coords = []
+            for poly in polys:
+                all_x_coords.extend([point[0] for point in poly])
+            
+            min_x = min(all_x_coords)
+            max_x = max(all_x_coords)
+            document_width = max_x - min_x
+            left_boundary = min_x + document_width * left_region_ratio
+            
+            print(f"📏 문서 너비: {document_width:.1f}, 왼쪽 경계: {left_boundary:.1f}")
+            
+            # 왼쪽 영역 필터링
+            left_items = []
+            for i in range(min(len(texts), len(polys), len(scores))):
+                text = texts[i].strip()
+                poly = polys[i]
+                confidence = scores[i] if i < len(scores) else 0.0
+                
+                # 신뢰도 및 길이 필터링
+                if confidence < confidence_threshold or len(text) < min_word_length:
+                    continue
+                
+                # left 값 계산
+                left = min([point[0] for point in poly])
+                top = min([point[1] for point in poly])
+                bottom = max([point[1] for point in poly])
+                center_y = (top + bottom) / 2
+                
+                # 왼쪽 영역 필터링
+                if left <= left_boundary:
+                    left_items.append({
+                        'text': text,
+                        'confidence': confidence,
+                        'left': left,
+                        'center_y': center_y
+                    })
+            
+            # Y 좌표 기준 정렬
+            left_items.sort(key=lambda x: x['center_y'])
+            
+            return left_items
+            
+        except Exception as e:
+            print(f"❌ 간단 추출 실패: {e}")
+            return []
+
+    def _setup_korean_font(self):
+        """한글 폰트 설정 (NanumGothic 사용)"""
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.font_manager as fm
+            import os
+            
+            # NanumGothic 폰트 직접 등록
+            nanum_path = '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'
+            
+            if os.path.exists(nanum_path):
+                # 폰트 등록
+                fm.fontManager.addfont(nanum_path)
+                font_prop = fm.FontProperties(fname=nanum_path)
+                
+                # matplotlib 설정
+                plt.rcParams['font.family'] = font_prop.get_name()
+                plt.rcParams['axes.unicode_minus'] = False
+                
+                print(f"✅ 한글 폰트 설정 완료: {font_prop.get_name()}")
+                
+            else:
+                # 대체 폰트 사용
+                plt.rcParams['font.family'] = 'DejaVu Sans'
+                plt.rcParams['axes.unicode_minus'] = False
+                print("⚠️ NanumGothic을 찾을 수 없어 DejaVu Sans 사용")
+                
+        except Exception as e:
+            print(f"❌ 폰트 설정 오류: {e}")
+            import matplotlib.pyplot as plt
+            plt.rcParams['font.family'] = 'DejaVu Sans'
+            plt.rcParams['axes.unicode_minus'] = False
+    
+    def debug_ocr_result(self, result, image_path: str = None):
+        """
+        PaddleOCR 3.2.0 시각화 
+        
+        Args:
+            result: PaddleOCR.predict() 반환값
+            image_path (str, optional): 시각화할 이미지 파일 경로. None이면 텍스트 분석만 수행
+        """
+        try:
+            print(f"🎨 PaddleOCR 3.2.0 시각화 시작...")
+            
+            if not result or len(result) == 0:
+                print("❌ 표시할 OCR 결과가 없습니다.")
+                return
+            
+            page_result = result[0]
+            if not isinstance(page_result, dict):
+                print("❌ OCR 결과 형식이 올바르지 않습니다.")
+                return
+            
+            # OCR 결과 추출
+            texts = page_result.get('rec_texts', [])
+            polys = page_result.get('dt_polys', page_result.get('rec_polys', []))
+            scores = page_result.get('rec_scores', [])
+            
+            if not texts or not polys:
+                print("❌ 텍스트나 좌표 정보가 없습니다.")
+                return
+
+            # OCR 결과 텍스트 분석 (항상 실행)
+            print("🔍 OCR 결과 분석:")
+            
+            if isinstance(result, list) and len(result) > 0:
+                page_result = result[0]
+                if isinstance(page_result, dict):
+                    texts = page_result.get('rec_texts', [])
+                    scores = page_result.get('rec_scores', [])
+                    polys = page_result.get('rec_polys', [])
+                    
+                    print(f"   📝 텍스트: {len(texts)}개")
+                    print(f"   📊 신뢰도: {len(scores)}개")
+                    print(f"   📍 좌표: {len(polys)}개")
+                    print(f"   🔑 전체 키: {list(page_result.keys())}")
+                    
+                    if texts:
+                        print(f"   📄 인식된 텍스트들:")
+                        for i, text in enumerate(texts, 1):
+                            confidence = f" (신뢰도: {scores[i-1]:.4f})" if i-1 < len(scores) else ""
+                            print(f"      {i}. '{text}'{confidence}")
+                    
+                    # 신뢰도 통계
+                    if scores:
+                        avg_confidence = sum(scores) / len(scores)
+                        print(f"   📊 평균 신뢰도: {avg_confidence:.4f}")
+                        print(f"   📊 신뢰도 범위: {min(scores):.4f} ~ {max(scores):.4f}")
+                        
+                else:
+                    print(f"   ⚠️ 예상과 다른 구조: {type(page_result)}")
+            else:
+                print(f"   ⚠️ 예상과 다른 최상위 구조: {type(result)}")
+
+            # image_path가 제공된 경우에만 이미지 시각화 실행
+            if image_path is None:
+                print("💡 이미지 경로가 제공되지 않아 텍스트 분석만 수행했습니다.")
+                print("   시각화를 원한다면 image_path를 지정하세요.")
+                return
+
+            # 새로운 PaddleX 기반 시각화 구현
+            from PIL import Image, ImageDraw, ImageFont
+            import matplotlib.pyplot as plt
+            import numpy as np
+            import os
+            
+            # 원본 이미지 로드
+            pil_image = Image.open(image_path).convert('RGB')
+            draw = ImageDraw.Draw(pil_image)
+            
+            print(f"📊 시각화 정보:")
+            print(f"   - 이미지 크기: {pil_image.size}")
+            print(f"   - 텍스트 수: {len(texts)}")
+            print(f"   - 좌표 수: {len(polys)}")
+            
+            # 폰트 설정
+            try:
+                font_path = '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'
+                if os.path.exists(font_path):
+                    font = ImageFont.truetype(font_path, 24)
+                    label_font = ImageFont.truetype(font_path, 16)
+                else:
+                    font = ImageFont.load_default()
+                    label_font = ImageFont.load_default()
+            except:
+                font = ImageFont.load_default()
+                label_font = ImageFont.load_default()
+            
+            # 색상 팔레트
+            colors = [
+                (255, 0, 0),     # 빨강
+                (0, 255, 0),     # 초록
+                (0, 0, 255),     # 파랑
+                (255, 165, 0),   # 주황
+                (128, 0, 128),   # 보라
+                (255, 20, 147),  # 분홍
+                (0, 191, 255),   # 하늘색
+                (255, 215, 0),   # 금색
+            ]
+            
+            # 바운딩 박스와 텍스트 그리기
+            for i, (text, poly) in enumerate(zip(texts, polys)):
+                try:
+                    # 좌표 정규화
+                    if isinstance(poly, (list, np.ndarray)):
+                        poly_array = np.array(poly, dtype=np.float32)
+                        
+                        if poly_array.ndim == 1 and len(poly_array) == 8:
+                            poly_array = poly_array.reshape(4, 2)
+                        
+                        if poly_array.ndim == 2 and poly_array.shape[0] >= 4:
+                            # 다각형 좌표
+                            polygon_points = [(int(p[0]), int(p[1])) for p in poly_array]
+                            
+                            # 색상 선택 (순환)
+                            color = colors[i % len(colors)]
+                            
+                            # 다각형 테두리 그리기
+                            draw.polygon(polygon_points, outline=color, width=3)
+                            
+                            # 번호 레이블 위치 (왼쪽 상단)
+                            label_x = int(poly_array[0][0])
+                            label_y = max(0, int(poly_array[0][1]) - 25)
+                            
+                            # 번호 배경 (가독성을 위해)
+                            label_text = str(i + 1)
+                            try:
+                                bbox = draw.textbbox((label_x, label_y), label_text, font=label_font)
+                                draw.rectangle(bbox, fill=color)
+                            except:
+                                # textbbox가 없는 구버전 PIL 대응
+                                draw.rectangle((label_x-2, label_y-2, label_x+20, label_y+18), fill=color)
+                            
+                            # 번호 텍스트
+                            draw.text((label_x, label_y), label_text, fill=(255, 255, 255), font=label_font)
+                            
+                            # 신뢰도 표시 (선택적)
+                            if i < len(scores):
+                                confidence_text = "{:.3f}".format(scores[i])
+                                conf_y = label_y + 20
+                                draw.text((label_x, conf_y), confidence_text, fill=color, font=label_font)
+                            
+                            # 로그 출력
+                            score_text = "{:.3f}".format(scores[i]) if i < len(scores) else 'N/A'
+                            print("   ✅ {}. '{}' - 신뢰도: {}".format(i+1, text, score_text))
+                            
+                except Exception as e:
+                    print("   ❌ 바운딩 박스 그리기 실패 ({}): {}".format(i+1, str(e)))
+                    continue
+            
+            # matplotlib으로 표시
+            self._setup_korean_font()
+            
+            plt.figure(figsize=(20, 14))
+            plt.imshow(pil_image)
+            # 타이틀 제거 (요청사항 3)
+            plt.axis('off')
+            
+            # 좌측 하단: 인식된 텍스트 목록 (신뢰도 막대 제거, 한글 깨짐 방지)
+            text_info_lines = []
+            for i, (text, score) in enumerate(zip(texts, scores)):
+                # 신뢰도 막대 그래프 제거 (요청사항 1)
+                line = "{}. {} ({:.3f})".format(i+1, text, score)
+                text_info_lines.append(line)
+            
+            text_info = "\n".join(text_info_lines)
+            
+            # 한글 깨짐 방지를 위해 fontfamily 제거 (요청사항 1)
+            plt.figtext(0.02, 0.02, "인식된 텍스트:\n{}".format(text_info), 
+                    fontsize=11, verticalalignment='bottom',
+                    bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.95))
+            
+            # 좌측 상단: 통계 정보 (요청사항 2)
+            if scores:
+                avg_confidence = sum(scores) / len(scores)
+                min_score = min(scores)
+                max_score = max(scores)
+                stats_text = "총 {}개 텍스트\n평균 신뢰도: {:.3f}\n범위: {:.3f} ~ {:.3f}".format(
+                    len(texts), avg_confidence, min_score, max_score
+                )
+            else:
+                stats_text = "총 {}개 텍스트\n신뢰도 정보 없음".format(len(texts))
+            
+            # 위치를 좌측 상단으로 변경 (0.02, 0.98)
+            plt.figtext(0.02, 0.98, stats_text, 
+                    fontsize=12, horizontalalignment='left', verticalalignment='top',
+                    bbox=dict(boxstyle="round,pad=0.5", facecolor="lightblue", alpha=0.9))
+            
+            plt.tight_layout()
+            plt.show()
+            
+            print("✅ PaddleOCR 3.2.0 시각화 완료!")
+            if scores:
+                avg_confidence = sum(scores) / len(scores)
+                print("📊 통계: 평균 신뢰도 {:.4f}, 범위 {:.3f}~{:.3f}".format(
+                    avg_confidence, min(scores), max(scores)
+                ))
+            
+        except Exception as e:
+            print("❌ PaddleOCR 3.2.0 시각화 실패: {}".format(str(e)))
+            import traceback
+            traceback.print_exc()
+
+   
+
+
+
+
+
