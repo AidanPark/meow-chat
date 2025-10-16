@@ -371,7 +371,7 @@ def conditional_dewarp(
     return _cv_to_pil(dewarped)
 
 # ---------- 최소 해상도 확보 업스케일 ----------
-def upscale_min_resolution(img: Image.Image, min_long_edge: int = 1800) -> Image.Image:
+def upscale_min_resolution(img: Image.Image, min_long_edge: int = 1920) -> Image.Image:
     """
     4) 해상도 표준화(업스케일만): 소수점/기호 선명도를 위해 최소 해상도 확보, 과대 크기는 축소하지 않음
     """
@@ -890,7 +890,7 @@ def add_white_border(img: Image.Image, border: int = 4) -> Image.Image:
     return img
 
 # ---------- 목표 해상도로 다운스케일 ----------
-def downscale_target_long_edge(img: Image.Image, target_long_edge: int = 1800) -> Image.Image:
+def downscale_target_long_edge(img: Image.Image, target_long_edge: int = 1920) -> Image.Image:
     """
     11) 해상도 표준화(다운스케일 허용): 과대 크기는 축소
     """

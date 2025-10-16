@@ -9,9 +9,10 @@ License: Apache 2.0
 
 import cv2
 import numpy as np
+import re
 from paddleocr import PaddleOCR
 import jsonpickle
-import numpy as np
+from typing import Optional
 
 class PaddleOCRService:
     """
@@ -42,12 +43,15 @@ class PaddleOCRService:
             use_doc_orientation_classify=True, # 문서 방향 분류/교정 모델 로드
             use_doc_unwarping=True,            # 문서 휘어짐 보정 
             use_textline_orientation=True,     # 방향 분류 활성화
-            # text_det_thresh=0.2,               # 감지 임계값 
-            # text_rec_score_thresh=0.7,         # 인식 임계값 
-            # text_recognition_batch_size=1,     # 배치 크기 
-            # text_det_limit_side_len=1600,      # 이미지 크기 
-            # return_word_box=True,              # 단어별 박스 반환       
 
+            # text_detection_model_name="PP-OCRv5_server_det",
+            # text_recognition_model_name="korean_PP-OCRv5_server_rec",
+            # text_det_limit_side_len=1920,      # 이미지 크기 
+            # text_det_thresh=0.25,               # 감지 임계값 
+            # text_rec_score_thresh=0.75,         # 인식 임계값 
+
+            # text_recognition_batch_size=1,     # 배치 크기         
+            # return_word_box=True,              # 단어별 박스 반환       
             # text_det_unclip_ratio=2.5,         # 텍스트 박스 확장  
             **kwargs
         )
@@ -518,9 +522,11 @@ class PaddleOCRService:
             flow_steps.append("1. 이미지 로드 및 크기 조정")
             
             if preprocessing_settings['document']['enabled']:
-                if 'orientation' in preprocessing_settings['document']['modules']:
+                doc_section = preprocessing_settings.get('document') if isinstance(preprocessing_settings, dict) else None
+                doc_modules = doc_section.get('modules', {}) if isinstance(doc_section, dict) else {}
+                if isinstance(doc_modules, dict) and 'orientation' in doc_modules:
                     flow_steps.append("2. 문서 방향 분류")
-                if 'unwarping' in preprocessing_settings['document']['modules']:
+                if isinstance(doc_modules, dict) and 'unwarping' in doc_modules:
                     flow_steps.append("3. 문서 교정 (언워핑)")
             
             flow_steps.append(f"{len(flow_steps)+1}. 텍스트 감지 ({detection_settings.get('model_name', 'Unknown')})")
@@ -635,6 +641,9 @@ class PaddleOCRService:
             # 바이트 데이터를 numpy 배열로 변환
             nparr = np.frombuffer(image_bytes, np.uint8)
             cv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if cv_image is None:
+                print("❌ 이미지 디코딩 실패: 지원되지 않는 형식이거나 손상된 이미지입니다.")
+                return None
             
             # numpy 배열로 OCR 실행 (재귀 호출)
             return self.run_ocr_from_nparray(cv_image)
@@ -657,22 +666,18 @@ class PaddleOCRService:
             list[dict[str, str | float | None]]: [{"text": str, "confidence": float | None}, ...] 형태의 리스트
             데이터 무결성 오류 시 빈 리스트 반환
         """
-        # rec_texts 속성 확인
-        if hasattr(ocr_result, 'rec_texts'):
-            rec_texts = ocr_result.rec_texts
-        elif isinstance(ocr_result, dict) and 'rec_texts' in ocr_result:
-            rec_texts = ocr_result['rec_texts']
-        else:
+        # rec_texts/rec_scores 안전 추출 (속성 또는 dict 키)
+        rec_texts = getattr(ocr_result, 'rec_texts', None)
+        if rec_texts is None and isinstance(ocr_result, dict):
+            rec_texts = ocr_result.get('rec_texts')
+        if rec_texts is None:
             print("❌ rec_texts를 찾을 수 없습니다.")
             return []
-        
-        # rec_scores 속성 확인 (한 번만)
-        rec_scores = None
-        if hasattr(ocr_result, 'rec_scores'):
-            rec_scores = ocr_result.rec_scores
-        elif isinstance(ocr_result, dict) and 'rec_scores' in ocr_result:
-            rec_scores = ocr_result['rec_scores']
-        else:
+
+        rec_scores = getattr(ocr_result, 'rec_scores', None)
+        if rec_scores is None and isinstance(ocr_result, dict):
+            rec_scores = ocr_result.get('rec_scores')
+        if rec_scores is None:
             print("❌ rec_scores를 찾을 수 없습니다.")
             return []
         
@@ -688,7 +693,73 @@ class PaddleOCRService:
             return result_list    
         else:
             # 길이가 다르거나 rec_scores가 없으면 [] 반환
+            return []        
+
+    def postprocess_split_value_unit(self, items: list[dict[str, str | float | None]], max_unit_len: int = 10) -> list[dict[str, str | float | None]]:
+        """
+        "숫자 + 공백 + 단위" 형태의 토큰을 보수적으로 분리하는 후처리.
+
+        정책(안전 장치):
+        - 전체 형태가 "<number> <unit>"와 정확히 매칭되어야 함. (선행/후행 공백 허용)
+        - unit 부분에 범위 구분자(-, –, ~)가 포함되면 분리하지 않음.
+        - unit 길이가 너무 길면(기본 10자 초과) 분리하지 않음.
+        - unit에는 숫자가 포함될 수 있음(예: 10^3/µL, 10³/µL, x10^3/µL). 단, 범위를 의미하는 패턴은 제외.
+
+        예:
+        - "18.065 KuL" -> ["18.065", "KuL"]
+        - "305 KuL"    -> ["305", "KuL"]
+        - "1.78 KuL"   -> ["1.78", "KuL"]
+        - "5.4 10³/µL" -> ["5.4", "10³/µL"]
+        - "7.1 x10^3/µL" -> ["7.1", "x10^3/µL"]
+
+        제외:
+        - "151-600", "13.2-20.8" (범위 표기)
+        - unit이 비정상적으로 길거나 범위 구분자를 포함하는 경우
+
+        Args:
+            items: extract_text_with_confidence에서 반환된 [{"text", "confidence"}] 목록
+            max_unit_len: 분리 허용 최대 단위 길이(기본 10)
+
+        Returns:
+            분리 적용 후의 새 토큰 목록
+        """
+        if not items:
             return []
+
+        # 전체 매칭용 정규식: 앞에 값 숫자, 뒤에 임의의 비공백 포함 단위
+        full_pat = re.compile(r"^\s*([-+]?\d+(?:\.\d+)?)\s+(.+?)\s*$")
+
+        out: list[dict[str, str | float | None]] = []
+        for it in items:
+            text = str(it.get("text", "") or "")
+            conf = it.get("confidence", None)
+
+            # 빠른 스킵: 공백 포함 안 하면 분리 불가
+            if " " not in text:
+                out.append(it)
+                continue
+
+            m = full_pat.match(text)
+            if not m:
+                out.append(it)
+                continue
+
+            value_str = m.group(1).strip()
+            unit_str = m.group(2).strip()
+
+            # unit 검증: 범위 구분자 포함 시 제외, 길이 제한
+            if any(sep in unit_str for sep in ["-", "–", "~"]):
+                out.append(it)
+                continue
+            if len(unit_str) == 0 or len(unit_str) > max_unit_len:
+                out.append(it)
+                continue
+
+            # 분리 적용: 원 토큰 하나를 값/단위 두 토큰으로 대체
+            out.append({"text": value_str, "confidence": conf})
+            out.append({"text": unit_str, "confidence": conf})
+
+        return out
 
     def convert_to_json(self, result, pretty: bool = True):
         """jsonpickle을 사용한 JSON 변환"""
@@ -702,7 +773,7 @@ class PaddleOCRService:
             
             if pretty:
                 import json
-                parsed = json.loads(json_string)
+                parsed = json.loads(json_string or "null")
                 return json.dumps(parsed, indent=2, ensure_ascii=False)
             
             return json_string
@@ -977,7 +1048,7 @@ class PaddleOCRService:
             plt.rcParams['font.family'] = 'DejaVu Sans'
             plt.rcParams['axes.unicode_minus'] = False
     
-    def debug_ocr_result(self, result, image_path: str = None):
+    def debug_ocr_result(self, result, image_path: Optional[str] = None):
         """
         PaddleOCR 3.2.0 시각화 
         
