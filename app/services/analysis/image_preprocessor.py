@@ -1,12 +1,32 @@
+"""
+이미지 전처리 모듈 및 클래스(ImagePreprocessor)
+
+- 본 파일은 이미지 전처리의 모든 함수형 유틸과 클래스 API를 함께 제공합니다.
+- 바이트 입력 → PIL 변환 → 파이프라인 적용 → 바이트 출력까지 일관된 API 제공
+- 설정값(Settings)으로 파이프라인 on/off 및 파라미터 제어
+- 한국어 주석/문서화
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Tuple, Optional, Callable, Sequence, Dict, Any
 import io
-from typing import List, Dict, Any, Tuple, Callable, Sequence, Optional
-import fitz
-import tempfile
-from PIL import Image, ImageFilter, ImageOps
-import numpy as np
-from pytesseract import image_to_data, Output
-import cv2
 import os
+import tempfile
+
+import numpy as np
+import cv2  # type: ignore
+import fitz  # PyMuPDF
+from pytesseract import image_to_data, Output  # type: ignore
+from PIL import Image, ImageFilter, ImageOps
+
+# Pillow resampling fallback
+try:
+    from PIL.Image import Resampling as PILResampling  # type: ignore
+    RESAMPLE_LANCZOS: int = int(PILResampling.LANCZOS)  # type: ignore[call-arg]
+except Exception:
+    RESAMPLE_LANCZOS = 1  # fallback to an integer resample constant
+
 
 # ---------- 공통 보조 ----------
 def _pil_to_cv(img: Image.Image) -> np.ndarray:
@@ -19,6 +39,7 @@ def _pil_to_cv(img: Image.Image) -> np.ndarray:
     # RGB -> BGR
     return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR) if cv2 is not None else arr[:, :, ::-1]
 
+
 def _cv_to_pil(arr: np.ndarray) -> Image.Image:
     if arr.ndim == 2:
         return Image.fromarray(arr)
@@ -28,6 +49,7 @@ def _cv_to_pil(arr: np.ndarray) -> Image.Image:
     else:
         arr = arr[:, :, ::-1]
     return Image.fromarray(arr)
+
 
 def _order_quad(pts: np.ndarray) -> np.ndarray:
     # pts: (4,2)
@@ -39,6 +61,19 @@ def _order_quad(pts: np.ndarray) -> np.ndarray:
     bl = pts[np.argmax(diff)]
     return np.array([tl, tr, br, bl], dtype=np.float32)
 
+
+def _norm_minmax(arr: np.ndarray) -> np.ndarray:
+    """Normalize array to 0..255 uint8 (type-checker friendly)."""
+    a = arr.astype(np.float32)
+    mn = float(a.min())
+    mx = float(a.max())
+    if mx - mn < 1e-6:
+        return a.clip(0, 255).astype(np.uint8)
+    out = (a - mn) * (255.0 / (mx - mn))
+    return out.clip(0, 255).astype(np.uint8)
+
+
+# ---------- PDF → 이미지 ----------
 def pdf_to_images(pdf_path: str, resolution_scale: float = 1.5) -> List[bytes]:
     """
     PDF 파일 경로를 받아 각 페이지를 PNG 바이트로 변환해 리스트로 반환
@@ -59,6 +94,7 @@ def pdf_to_images(pdf_path: str, resolution_scale: float = 1.5) -> List[bytes]:
             pass
     return png_list
 
+
 # ---------- 로드+EXIF 회전 교정 ----------
 def open_with_exif(img_bytes: bytes):
     """
@@ -71,6 +107,7 @@ def open_with_exif(img_bytes: bytes):
         pass
     return img
 
+
 # ---------- 투명 채널 플래튼 ----------
 def flatten_transparency(img: Image.Image) -> Image.Image:
     """
@@ -81,6 +118,7 @@ def flatten_transparency(img: Image.Image) -> Image.Image:
         alpha = img.split()[-1]
         return Image.composite(img.convert("RGB"), bg, alpha)
     return img
+
 
 # ---------- 여백 기반 자동 크롭 ----------
 def auto_crop_with_margin(img: Image.Image, margin: int = 20) -> Image.Image:
@@ -99,10 +137,11 @@ def auto_crop_with_margin(img: Image.Image, margin: int = 20) -> Image.Image:
     y1 = min(img.height, y1 + margin)
     return img.crop((x0, y0, x1, y1))
 
+
 # ---------- 문서 외곽 사변형 경계 탐지 ----------
 def detect_document_quad(img: Image.Image, min_area_ratio: float = 0.2, debug: bool = False) -> Optional[List[Tuple[int, int]]]:
     """
-    new detect_document_quad(문서 외곽 사변형 경계 탐지)
+    문서 외곽 사변형 경계 탐지
     - 성공 시 좌상, 우상, 우하, 좌하 4점 반환, 실패 시 None
     """
     if cv2 is None:
@@ -131,10 +170,11 @@ def detect_document_quad(img: Image.Image, min_area_ratio: float = 0.2, debug: b
     if debug: print("[detect_document_quad] 사변형 미발견")
     return None
 
+
 # ---------- 사변형 → 직사각 투시 보정 ----------
 def perspective_unwarp(img: Image.Image, quad: Optional[List[Tuple[int,int]]] = None, keep_aspect: bool = True, padding: int = 0, debug: bool = False) -> Image.Image:
     """
-    new perspective_unwarp(사변형 → 직사각 투시 보정)
+    사변형 → 직사각 투시 보정
     - quad가 없으면 자동 검출을 시도
     """
     if cv2 is None:
@@ -173,6 +213,7 @@ def perspective_unwarp(img: Image.Image, quad: Optional[List[Tuple[int,int]]] = 
     if debug: print(f"[perspective_unwarp] 완료 → {dst_w}x{dst_h}")
     return _cv_to_pil(warped)
 
+
 # ---------- OSD + 텍스트 라인 기반 미세 기울기 보정 ----------
 def deskew_textlines(
     img: Image.Image,
@@ -194,7 +235,7 @@ def deskew_textlines(
     # 1) Tesseract OSD로 초기 각도 추정
     osd_angle = 0.0
     try:
-        from pytesseract import image_to_osd, Output
+        from pytesseract import image_to_osd, Output  # type: ignore
         osd = image_to_osd(img, output_type=Output.DICT, config="--psm 0")
         # Tesseract는 시계 방향을 양수로 보고, 우리는 반시계 방향을 양수로 사용하므로 부호 반전
         angle_candidate = -float(osd.get('rotate', 0))
@@ -239,13 +280,15 @@ def deskew_textlines(
                 ang = np.degrees(np.arctan2(y2 - y1, x2 - x1))
                 if -max_angle <= ang <= max_angle:
                     L = float(np.hypot(x2 - x1, y2 - y1))
-                    angles.append(ang); weights.append(L)
-        
+                    angles.append(ang)
+                    weights.append(L)
+
         hough_angle = float(np.average(angles, weights=weights)) if angles else 0.0
-        if debug: print(f"[deskew_textlines] Hough angle: {hough_angle:.2f}°")
+        if debug:
+            print(f"[deskew_textlines] Hough angle: {hough_angle:.2f}°")
         # OSD 결과가 거의 없을 때만 Hough 결과 사용
         if abs(osd_angle) < 0.1 and abs(hough_angle) > abs(osd_angle):
-             coarse = hough_angle
+            coarse = float(hough_angle)
 
     final_angle = coarse
 
@@ -269,10 +312,10 @@ def deskew_textlines(
 
         best_s, best_a = -1e9, coarse
         for a in np.arange(coarse - refine_range, coarse + refine_range + 1e-9, refine_step):
-            s = score(a)
+            s = score(float(a))
             if s > best_s:
-                best_s, best_a = s, a
-        final_angle = best_a
+                best_s, best_a = s, float(a)
+        final_angle = float(best_a)
 
     if debug:
         print(f"[deskew_textlines] coarse={coarse:.2f}°, final={final_angle:.2f}°")
@@ -280,11 +323,12 @@ def deskew_textlines(
     if abs(final_angle) < 0.05:
         return img
 
-    M = cv2.getRotationMatrix2D((w / 2, h / 2), final_angle, 1.0)
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), float(final_angle), 1.0)
     rotated = cv2.warpAffine(im, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     if pad > 0 and rotated.shape[0] > 2 * pad and rotated.shape[1] > 2 * pad:
         rotated = rotated[pad:-pad, pad:-pad]
     return _cv_to_pil(rotated)
+
 
 # ---------- 페이지 말림/곡면 보정·필요 시만 ----------
 def conditional_dewarp(
@@ -370,6 +414,7 @@ def conditional_dewarp(
     if debug: print("[conditional_dewarp] 디워프 적용 (안전 게이트 통과)")
     return _cv_to_pil(dewarped)
 
+
 # ---------- 최소 해상도 확보 업스케일 ----------
 def upscale_min_resolution(img: Image.Image, min_long_edge: int = 1920) -> Image.Image:
     """
@@ -377,15 +422,20 @@ def upscale_min_resolution(img: Image.Image, min_long_edge: int = 1920) -> Image
     """
     w, h = img.size
     long_edge = max(w, h)
-    if long_edge < min_long_edge:
+    # 업스케일이 필요한 경우에만 수행, 아니면 원본 반환
+    if long_edge < min_long_edge and long_edge > 0:
         scale = min_long_edge / float(long_edge)
-        img = img.resize((int(round(w * scale)), int(round(h * scale))), Image.LANCZOS)
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        if new_w != w or new_h != h:
+            return img.resize((new_w, new_h), RESAMPLE_LANCZOS)
     return img
+
 
 # ---------- 배경 평탄화·그라디언트/그림자 제거 ----------
 def illumination_flatten(img: Image.Image, blur_ratio: float = 0.03, debug: bool = False) -> Image.Image:
     """
-    new illumination_flatten(배경 평탄화·그림자 제거)
+    배경 평탄화·그림자 제거
     - 큰 가우시안 블러로 배경을 추정 후 L(밝기) 채널에서 평탄화
     """
     if cv2 is None:
@@ -397,21 +447,21 @@ def illumination_flatten(img: Image.Image, blur_ratio: float = 0.03, debug: bool
         L, A, B = cv2.split(lab)
         k = max(3, int(round(max(im.shape[:2]) * blur_ratio)) | 1)
         bg = cv2.GaussianBlur(L, (k, k), 0)
-        flat = cv2.normalize(cv2.subtract(L, bg) + 128, None, 0, 255, cv2.NORM_MINMAX)
+        flat = _norm_minmax(cv2.subtract(L, bg) + 128)
         lab = cv2.merge([flat, A, B])
         out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
     else:
         k = max(3, int(round(max(im.shape[:2]) * blur_ratio)) | 1)
         bg = cv2.GaussianBlur(im, (k, k), 0)
-        out = cv2.normalize(cv2.subtract(im, bg) + 128, None, 0, 255, cv2.NORM_MINMAX)
+        out = _norm_minmax(cv2.subtract(im, bg) + 128)
     if debug: print(f"[illumination_flatten] k={k} 적용")
     return _cv_to_pil(out)
+
 
 # ---------- 하이라이트/빛반사 감쇠 ----------
 def suppress_glare(img: Image.Image, v_high: int = 230, s_low: int = 40, debug: bool = False) -> Image.Image:
     """
-    new suppress_glare(하이라이트/빛반사 감쇠)
-    - HSV에서 S 낮고 V 높은 영역을 완만히 억제
+    하이라이트/빛반사 감쇠 - HSV에서 S 낮고 V 높은 영역을 완만히 억제
     """
     if cv2 is None:
         if debug: print("[suppress_glare] OpenCV 미설치 - 원본 반환")
@@ -419,7 +469,14 @@ def suppress_glare(img: Image.Image, v_high: int = 230, s_low: int = 40, debug: 
     im = _pil_to_cv(img)
     hsv = cv2.cvtColor(im, cv2.COLOR_BGR2HSV) if im.ndim == 3 else cv2.cvtColor(cv2.cvtColor(im, cv2.COLOR_GRAY2BGR), cv2.COLOR_BGR2HSV)
     H, S, V = cv2.split(hsv)
-    mask = cv2.inRange(S, 0, s_low) & cv2.inRange(V, v_high, 255)
+    # Use MatLike bounds to satisfy type checker
+    mask_low = np.array(0, dtype=np.uint8)
+    mask_high_s = np.array(s_low, dtype=np.uint8)
+    mask_high_v = np.array(255, dtype=np.uint8)
+    mask_low_vhigh = np.array(v_high, dtype=np.uint8)
+    m1 = cv2.inRange(S, mask_low, mask_high_s)
+    m2 = cv2.inRange(V, mask_low_vhigh, mask_high_v)
+    mask = cv2.bitwise_and(m1, m2)
     # 밝기 완만 감소
     V2 = V.copy()
     V2[mask > 0] = (0.85 * V2[mask > 0]).astype(np.uint8)
@@ -427,6 +484,7 @@ def suppress_glare(img: Image.Image, v_high: int = 230, s_low: int = 40, debug: 
     out = cv2.cvtColor(hsv2, cv2.COLOR_HSV2BGR)
     if debug: print("[suppress_glare] 글레어 감쇠 적용")
     return _cv_to_pil(out)
+
 
 # ---------- 이미지 모드 정규화 ----------
 def normalize_mode(img: Image.Image) -> Image.Image:
@@ -437,6 +495,7 @@ def normalize_mode(img: Image.Image) -> Image.Image:
         return img.convert("RGB")
     return img
 
+
 # ---------- 약한 전역 대비 보정 ----------
 def weak_autocontrast(img: Image.Image, cutoff: float = 0.4) -> Image.Image:
     """
@@ -444,10 +503,11 @@ def weak_autocontrast(img: Image.Image, cutoff: float = 0.4) -> Image.Image:
     """
     return ImageOps.autocontrast(img, cutoff=cutoff)
 
+
 # ---------- 로컬 대비 향상·과도 시 비활성화 ----------
 def apply_clahe(img: Image.Image, clip_limit: float = 2.0, tile_grid: Tuple[int,int] = (8,8), debug: bool = False) -> Image.Image:
     """
-    new apply_clahe(로컬 대비 향상·과도 시 비활성화)
+    로컬 대비 향상·과도 시 비활성화
     """
     if cv2 is None:
         if debug: print("[apply_clahe] OpenCV 미설치 - 원본 반환")
@@ -465,12 +525,14 @@ def apply_clahe(img: Image.Image, clip_limit: float = 2.0, tile_grid: Tuple[int,
     if debug: print("[apply_clahe] 적용 완료")
     return _cv_to_pil(out)
 
+
 # ---------- 보수적 샤프닝 ----------
 def conservative_sharpen(img: Image.Image, radius: float = 1.0, percent: int = 120, threshold: int = 4) -> Image.Image:
     """
     7) 보수적 샤픈: 소수점 주변 헤일로 없이 스트로크만 강화
     """
     return img.filter(ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=threshold))
+
 
 # ---------- 적-흑 변환 ----------
 def blacken_reddish_text(
@@ -515,6 +577,7 @@ def blacken_reddish_text(
     if debug: print("[blacken_reddish_text] 적용 완료")
     return _cv_to_pil(out)
 
+
 # ---------- 청-흑 변환 ----------
 def blacken_bluish_text(
     img: Image.Image,
@@ -523,7 +586,7 @@ def blacken_bluish_text(
     sat_thr: int = 55,      # 채도 임계
     min_v: int = 55,        # 최소 명도(배경 제외)
     darken: float = 0.1,   # V(밝기) 감쇠 비율(0~1, 낮을수록 더 검게)
-    thicken: int = 0.3,       # 마스크 팽창(획 보강)
+    thicken: int = 0,       # 마스크 팽창(획 보강)
     debug: bool = False
 ) -> Image.Image:
     """
@@ -565,6 +628,7 @@ def blacken_bluish_text(
     if debug: print("[blacken_bluish_text] 적용 완료 (center=%d, band=%d)" % (c, band))
     return _cv_to_pil(out)
 
+
 # ---------- 그레이스케일 변환 ----------
 def to_grayscale(img: Image.Image) -> Image.Image:
     """
@@ -574,10 +638,11 @@ def to_grayscale(img: Image.Image) -> Image.Image:
         return img.convert("L")
     return img
 
+
 # ---------- 적응형 이진화·문서용 ----------
 def adaptive_binarize_for_ocr(img: Image.Image, block_size: int = 25, k: float = 0.15, debug: bool = False) -> Image.Image:
     """
-    new adaptive_binarize_for_ocr(적응형 이진화·문서용)
+    적응형 이진화·문서용
     - scikit-image의 Sauvola가 있으면 사용, 없으면 OpenCV 가우시안 적응 이진화
     """
     arr = _pil_to_cv(img)
@@ -598,10 +663,11 @@ def adaptive_binarize_for_ocr(img: Image.Image, block_size: int = 25, k: float =
         if debug: print("[adaptive_binarize_for_ocr] OpenCV 적응 이진화 적용")
     return Image.fromarray(bw)
 
+
 # ---------- 모폴로지로 표 수평/수직 라인 약 강화 ----------
 def enhance_table_lines(img: Image.Image, strength: float = 0.5, debug: bool = False) -> Image.Image:
     """
-    new enhance_table_lines(모폴로지로 표 수평/수직 라인 약 강화)
+    모폴로지로 표 수평/수직 라인 약 강화
     - 블랙햇(black-hat)으로 어두운 선을 강조 후 원본에서 소량 감산
     """
     if cv2 is None:
@@ -626,6 +692,7 @@ def enhance_table_lines(img: Image.Image, strength: float = 0.5, debug: bool = F
     if debug: print("[enhance_table_lines] 라인 강화 완료")
     return _cv_to_pil(out)
 
+
 # ---------- TSV 앵커 기반 테이블 스마트 크롭 ----------
 def table_smart_crop(
     img: Image.Image,
@@ -638,7 +705,7 @@ def table_smart_crop(
     gap_multiplier: float = 2.8,
     min_rows: int = 5,
     debug: bool = True,
-    min_table_height: int = 100,  # 🆕 최소 테이블 높이 파라미터
+    min_table_height: int = 100,  # 최소 테이블 높이 파라미터
 ) -> Image.Image:
     """
     테이블 스마트 크롭(1순위: Tesseract TSV 앵커)
@@ -749,7 +816,7 @@ def table_smart_crop(
         if debug:
             print(f"[table_smart_crop] 📌 헤더 라인 발견: {len(header_lines)}개")
             if header_lines:
-                for idx, h in enumerate(header_lines[:5]):  # 🆕 최대 5개만 출력
+                for idx, h in enumerate(header_lines[:5]):  # 최대 5개만 출력
                     print(f"[table_smart_crop]    헤더 {idx+1}: y={h['y0']}, text='{h['text'][:50]}...'")
 
         # 바이오마커 앵커(헤더 실패 대비)
@@ -793,7 +860,7 @@ def table_smart_crop(
             if debug:
                 print(f"[table_smart_crop]    y_top={y_top}, anchor_x={anchor_x}")
 
-        # 🆕 하단 y 결정 (개선된 로직)
+        # 하단 y 결정 (개선된 로직)
         if debug:
             print("[table_smart_crop] 📐 하단 경계 계산 중...")
         
@@ -823,7 +890,7 @@ def table_smart_crop(
                 if debug:
                     print(f"[table_smart_crop] ⚠️ 최소 행 수 부족 ({len(band)} < {min_rows})")
                     print(f"[table_smart_crop] 🔄 전체 라인에서 공백 분석 시도...")
-                # 🆕 첫 열 제약 완화: 전체 라인에서 y_top 이후 모든 라인 고려
+                # 첫 열 제약 완화: 전체 라인에서 y_top 이후 모든 라인 고려
                 band = [l for l in lines if l["y0"] >= y_top]
                 band.sort(key=lambda l: l["y0"])
                 
@@ -879,6 +946,7 @@ def table_smart_crop(
             traceback.print_exc()
         return img
 
+
 # ---------- 얇은 흰색 테두리 추가 ----------
 def add_white_border(img: Image.Image, border: int = 4) -> Image.Image:
     """
@@ -889,17 +957,35 @@ def add_white_border(img: Image.Image, border: int = 4) -> Image.Image:
         return ImageOps.expand(img, border=border, fill=fill)
     return img
 
+
 # ---------- 목표 해상도로 다운스케일 ----------
 def downscale_target_long_edge(img: Image.Image, target_long_edge: int = 1920) -> Image.Image:
     """
     11) 해상도 표준화(다운스케일 허용): 과대 크기는 축소
     """
-    w, h = img.size
-    long_edge = max(w, h)
-    if long_edge > target_long_edge:
+    try:
+        w, h = img.size
+        long_edge = max(w, h)
+        # 비정상 파라미터 혹은 다운스케일 불필요 시 원본 반환
+        if not isinstance(target_long_edge, int) and not isinstance(target_long_edge, float):
+            return img
+        if target_long_edge <= 0:
+            return img
+        if long_edge <= 0:
+            return img
+        if long_edge <= target_long_edge:
+            return img
+
         scale = target_long_edge / float(long_edge)
-        img = img.resize((int(round(w * scale)), int(round(h * scale))), Image.LANCZOS)
-    return img
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        if new_w == w and new_h == h:
+            return img
+        return img.resize((new_w, new_h), RESAMPLE_LANCZOS)
+    except Exception:
+        # 안전을 위해 예외 시 원본 반환
+        return img
+
 
 # ---------- OCR 품질 게이트 ----------
 def _tesseract_metrics(pil_img: Image.Image, lang: str = "eng+kor") -> dict:
@@ -919,6 +1005,7 @@ def _tesseract_metrics(pil_img: Image.Image, lang: str = "eng+kor") -> dict:
     except Exception:
         return {"mean_conf": 0.0, "tokens": 0}
 
+
 def ocr_quality_gate(
     img: Image.Image,
     baseline_img: Optional[Image.Image] = None,
@@ -928,7 +1015,7 @@ def ocr_quality_gate(
     debug: bool = True,
 ) -> Image.Image:
     """
-    new ocr_quality_gate(토큰 수/평균 conf 기반 품질 점검·악화 시 이전 단계 롤백)
+    토큰 수/평균 conf 기반 품질 점검·악화 시 이전 단계 롤백
     - baseline_img가 주어지면 현재 이미지가 품질이 더 나쁘면 baseline으로 롤백
     - min_delta_*는 '현재 - 기준'의 최소 허용 변화량(음수 허용). 더 낮으면 롤백.
     """
@@ -950,6 +1037,7 @@ def ocr_quality_gate(
     worse = (d_conf < min_delta_conf) or (d_tok < min_delta_tokens)
     return baseline_img if worse else img
 
+
 # ---------- PNG 무손실 저장 ----------
 def save_png_bytes(img: Image.Image, compress_level: int = 6) -> bytes:
     """
@@ -959,6 +1047,7 @@ def save_png_bytes(img: Image.Image, compress_level: int = 6) -> bytes:
     img.save(buf, format="PNG", optimize=True, compress_level=compress_level)
     return buf.getvalue()
 
+
 def apply_pipeline(img: Image.Image, steps: Sequence[tuple[Callable, dict]]) -> Image.Image:
     """
     체이닝 실행 유틸. [(func, kwargs), ...] 형태로 전달된 스텝을 순서대로 적용.
@@ -966,3 +1055,141 @@ def apply_pipeline(img: Image.Image, steps: Sequence[tuple[Callable, dict]]) -> 
     for func, kwargs in steps:
         img = func(img, **kwargs)
     return img
+
+
+@dataclass
+class Settings:
+    """이미지 전처리 파이프라인 설정.
+
+    토글/파라미터:
+    - jpeg_quality: JPEG 저장 품질(1~95). 0이면 JPEG 저장을 적용하지 않고 PNG로 저장
+    - long_edge_min: 최소 해상도(업스케일 목표 롱엣지). 0이면 업스케일 미적용
+    - enable_flatten_transparency: 투명 채널 플래튼 적용 여부
+    - enable_normalize_mode: 이미지 모드 정규화(L/RGB) 적용 여부
+    - enable_glare_suppression: 빛반사 억제 적용 여부
+    - enable_weak_autocontrast: 약한 자동 대비 적용 여부
+    - enable_color_blacken: 붉은/푸른 텍스트 흑화 적용 여부
+    - enable_to_grayscale: 그레이스케일 변환 적용 여부
+    - enable_dewarp: 페이지 휘어짐 보정(조건부) 적용 여부
+    - enable_deskew: 미세 기울기 보정 적용 여부
+    - enable_table_enhance: 표 라인 강화 적용 여부
+    - enable_sharpen: 마지막 보수적 샤픈 적용 여부
+
+    기타:
+    - target_long_edge: 최종 다운스케일 목표 롱엣지. 0이면 다운스케일 미적용
+    - debug: 디버그 로그 출력
+    """
+    jpeg_quality: int = 0
+    long_edge_min: int = 1920
+    enable_flatten_transparency: bool = False
+    enable_normalize_mode: bool = False
+    enable_glare_suppression: bool = False
+    enable_weak_autocontrast: bool = False
+    enable_color_blacken: bool = False
+    enable_to_grayscale: bool = False
+    enable_dewarp: bool = False
+    enable_deskew: bool = False
+    enable_table_enhance: bool = False
+    enable_sharpen: bool = False
+    target_long_edge: int = 0
+    debug: bool = False
+
+
+class ImagePreprocessor:
+    """이미지 전처리 클래스.
+
+    본 모듈의 함수들을 이용해 일관된 바이트 입출력 API를 제공합니다.
+    """
+
+    def __init__(self, settings: Optional[Settings] = None):
+        self.settings = settings or Settings()
+
+    def build_steps(self) -> List[Tuple[Callable, dict]]:
+        """파이프라인 단계 목록을 구성."""
+        S = self.settings
+        steps: List[Tuple[Callable, dict]] = []
+        # 0) 기본 정리(옵션)
+        if S.enable_flatten_transparency:
+            steps.append((flatten_transparency, {}))
+        if S.enable_normalize_mode:
+            steps.append((normalize_mode, {}))
+
+        # 1) 해상도 표준화(업스케일) - long_edge_min>0 일 때만 적용
+        if S.long_edge_min and S.long_edge_min > 0:
+            steps.append((upscale_min_resolution, {"min_long_edge": S.long_edge_min}))
+
+        # 2) 조명/대비(옵션)
+        if S.enable_glare_suppression:
+            steps.append((suppress_glare, {"debug": S.debug}))
+        if S.enable_weak_autocontrast:
+            steps.append((weak_autocontrast, {}))
+        if S.enable_color_blacken:
+            steps.append((blacken_reddish_text, {"debug": S.debug}))
+            steps.append((blacken_bluish_text, {"debug": S.debug}))
+
+        # 3) 모드 변환(옵션)
+        if S.enable_to_grayscale:
+            steps.append((to_grayscale, {}))
+
+        # 4) 기하 보정(옵션)
+        if S.enable_dewarp:
+            steps.append((conditional_dewarp, {"debug": S.debug}))
+        if S.enable_deskew:
+            steps.append((deskew_textlines, {"debug": S.debug}))
+
+        # 5) 표 라인 강화(옵션)
+        if S.enable_table_enhance:
+            steps.append((enhance_table_lines, {"debug": S.debug}))
+
+        # 6) 최종 크기 조정(다운스케일) - target_long_edge>0 일 때만 적용
+        if S.target_long_edge and S.target_long_edge > 0:
+            steps.append((downscale_target_long_edge, {"target_long_edge": S.target_long_edge}))
+
+        # 7) 마지막 선명도(옵션)
+        if S.enable_sharpen:
+            steps.append((conservative_sharpen, {}))
+        return steps
+
+    def process_bytes(self, img_bytes: bytes, debug: Optional[bool] = None) -> bytes:
+        """바이트 입력을 처리하여 바이트(JPEG 기본)로 반환."""
+        if img_bytes is None:
+            raise ValueError("img_bytes is None")
+        dbg = self.settings.debug if debug is None else debug
+        try:
+            if dbg:
+                print("🏥 이미지 전처리 시작 (ImagePreprocessor)")
+            img = open_with_exif(img_bytes)
+            original_size = img.size
+            if dbg:
+                print(f"📏 원본 이미지 크기: {original_size}")
+
+            steps = self.build_steps()
+            img = apply_pipeline(img, steps)
+
+            buf = io.BytesIO()
+            # jpeg_quality>0 이면 JPEG 저장, 0이면 PNG 저장
+            if isinstance(self.settings.jpeg_quality, int) and self.settings.jpeg_quality > 0:
+                img = img.convert("L" if img.mode == "L" else "RGB")
+                img.save(buf, format="JPEG", quality=int(self.settings.jpeg_quality), optimize=True)
+            else:
+                img.save(buf, format="PNG", optimize=True)
+            out = buf.getvalue()
+
+            if dbg:
+                final_size = img.size
+                print(f"📐 최종 이미지 크기: {final_size}")
+                print(f"🔄 크기 변화: {original_size} → {final_size}")
+                # 바이트 용량 변화도 출력(이전 함수형 API와 동일 포맷)
+                original_bytes = len(img_bytes)
+                result_bytes_len = len(out)
+                percentage = (result_bytes_len / original_bytes) * 100 if original_bytes > 0 else 0.0
+                print(f"💾 용량 변화: {original_bytes:,} bytes → {result_bytes_len:,} bytes ({percentage:.1f}%)")
+                print("✅ 전처리 완료")
+            return out
+        except Exception as e:
+            if dbg:
+                import traceback
+                print(f"❌ 전처리 실패: {e}")
+                traceback.print_exc()
+            # 안전 폴백: 원본 반환
+            return img_bytes

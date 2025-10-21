@@ -5,8 +5,8 @@ Blood Analyzer Code Extraction Utilities
 """
 
 from typing import Set, List
-from reference_data_analyzers import ANALYZERS
-from reference_data_subparameters import SUBPARAMETERS
+from .reference.reference_data_analyzers import ANALYZERS
+from .reference.reference_data import REFERENCE_TESTS
 
 
 def extract_analyzer_codes() -> Set[str]:
@@ -26,19 +26,17 @@ def extract_analyzer_codes() -> Set[str]:
     return codes
 
 
-def extract_subparameter_codes() -> Set[str]:
+def extract_reference_codes() -> Set[str]:
     """
-    SUBPARAMETERS에서 모든 code를 추출합니다.
+    REFERENCE_TESTS에서 모든 code를 추출합니다.
     
     Returns:
-        Set[str]: 서브파라미터에서 추출된 모든 unique code들
+        Set[str]: 레퍼런스 데이터에서 추출된 모든 unique code들
     """
-    codes = set()
-    for category, items in SUBPARAMETERS.items():
-        if isinstance(items, list):
-            for item in items:
-                if "code" in item:
-                    codes.add(item["code"])
+    codes: Set[str] = set()
+    for item in REFERENCE_TESTS:
+        if isinstance(item, dict) and "code" in item:
+            codes.add(item["code"])
     return codes
 
 
@@ -50,8 +48,8 @@ def extract_all_unique_codes() -> List[str]:
         List[str]: 알파벳 순으로 정렬된 모든 unique code들
     """
     analyzer_codes = extract_analyzer_codes()
-    subparameter_codes = extract_subparameter_codes()
-    return sorted(analyzer_codes | subparameter_codes)
+    reference_codes = extract_reference_codes()
+    return sorted(analyzer_codes | reference_codes)
 
 
 def get_analyzer_codes_by_manufacturer(manufacturer: str) -> Set[str]:
@@ -94,23 +92,23 @@ def get_analyzer_codes_by_model(manufacturer: str, model: str) -> Set[str]:
     return codes
 
 
-def get_subparameter_codes_by_category(category: str) -> Set[str]:
+def get_reference_codes_by_prefix(prefix: str) -> Set[str]:
     """
-    특정 카테고리의 서브파라미터에서 코드들을 추출합니다.
+    특정 접두사로 시작하는 레퍼런스 코드들을 추출합니다.
     
     Args:
-        category (str): 카테고리 이름 (예: "CBC", "BLOOD_GAS")
+        prefix (str): 코드 접두사 (예: "AL", "BUN", "pH")
         
     Returns:
-        Set[str]: 해당 카테고리의 모든 code들
+        Set[str]: 조건에 맞는 code들
     """
-    codes = set()
-    if category in SUBPARAMETERS:
-        items = SUBPARAMETERS[category]
-        if isinstance(items, list):
-            for item in items:
-                if "code" in item:
-                    codes.add(item["code"])
+    codes: Set[str] = set()
+    p = prefix.upper()
+    for item in REFERENCE_TESTS:
+        if isinstance(item, dict):
+            c = str(item.get("code", ""))
+            if c.upper().startswith(p):
+                codes.add(c)
     return codes
 
 
@@ -122,17 +120,17 @@ def get_code_statistics() -> dict:
         dict: 통계 정보를 담은 딕셔너리
     """
     analyzer_codes = extract_analyzer_codes()
-    subparameter_codes = extract_subparameter_codes()
-    all_codes = analyzer_codes | subparameter_codes
-    common_codes = analyzer_codes & subparameter_codes
+    reference_codes = extract_reference_codes()
+    all_codes = analyzer_codes | reference_codes
+    common_codes = analyzer_codes & reference_codes
     
     return {
         "analyzer_codes_count": len(analyzer_codes),
-        "subparameter_codes_count": len(subparameter_codes),
+        "reference_codes_count": len(reference_codes),
         "total_unique_codes_count": len(all_codes),
         "common_codes_count": len(common_codes),
-        "analyzer_only_count": len(analyzer_codes - subparameter_codes),
-        "subparameter_only_count": len(subparameter_codes - analyzer_codes),
+        "analyzer_only_count": len(analyzer_codes - reference_codes),
+        "reference_only_count": len(reference_codes - analyzer_codes),
         "common_codes": sorted(common_codes)
     }
 
@@ -165,14 +163,12 @@ def search_code_in_data(search_code: str) -> dict:
                         "test_info": test
                     })
     
-    # SUBPARAMETERS에서 검색
-    for category, items in SUBPARAMETERS.items():
-        if isinstance(items, list):
-            for item in items:
-                if item.get("code") == search_code:
-                    result["found_in_subparameters"].append({
-                        "category": category,
-                        "item_info": item
-                    })
+    # REFERENCE_TESTS에서 검색
+    for item in REFERENCE_TESTS:
+        if isinstance(item, dict) and item.get("code") == search_code:
+            result["found_in_subparameters"].append({
+                "category": item.get("sample_type"),
+                "item_info": item
+            })
     
     return result
