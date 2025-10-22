@@ -475,55 +475,25 @@ def extract_and_group_lines(
     if isDebug:
         _dbg_print("grouped_lines_after_split", grouped)
 
-    # 4.4 분리 직후 1차 단위 정규화 (보수적)
-    # - unit_lexicon 주입 시에만 동작
-    # - 분리로 생성된 우측 토큰(_origin == split_unit_candidate)을 우선 대상으로 하고,
-    #   그 외에도 전형적 단위 형태(%, '/', 'µ/μ', '10^x', 'K/·', 'M/·')를 가진 짧은 토큰만 시도
+    # 4.4 분리 직후 1차 단위 처리(표시만)
+    # - 중복 정규화를 피하기 위해 이 단계에서는 단위를 '표시/주석'만 하고 텍스트를 변경하지 않습니다.
+    # - 최종 canonical 확정은 Step 11에서 한 번만 수행합니다.
     if unit_lexicon:
         try:
-            # 지연 임포트로 순환 참조 회피
-            from .reference.unit_lexicon import resolve_unit as _resolve_unit  # type: ignore
-
-            def _looks_like_unit(s: str, origin: Optional[str]) -> bool:
-                if origin == "split_unit_candidate":
-                    return True
-                t = s.strip()
-                if not t:
-                    return False
-                if len(t) > 15:  # 너무 긴 건 제외
-                    return False
-                # 전형적 형태 힌트
-                if ("/" in t) or ("%" in t) or ("µ" in t or "μ" in t):
-                    return True
-                if re.search(r"10\^\d+", t, re.IGNORECASE):
-                    return True
-                if re.fullmatch(r"[KkMm]\s*/\s*[uµµ]?L", t):
-                    return True
-                # g/dL, mg/dL, U/L, IU/L, mmol/L 등
-                if re.fullmatch(r"(?i)([a-z]{1,3}g|u|iu|mmol)/[dmµu]?l", t):
-                    return True
-                return False
-
-            norm_count = 0
+            marked = 0
             for line in grouped:
                 for tok in line:
-                    txt = str(tok.get("text", "") or "")
-                    origin = tok.get("_origin")
-                    if not _looks_like_unit(txt, origin if isinstance(origin, str) else None):
-                        continue
-                    cu = _resolve_unit(txt, lexicon=unit_lexicon)
-                    if cu and cu != txt:
-                        # 원문 보존 + 정규화 결과 저장
-                        tok.setdefault("raw_unit", txt)
-                        tok["text"] = cu
-                        tok["unit_canonical"] = cu
-                        tok["unit_norm_stage"] = "first_pass"
-                        norm_count += 1
-            if isDebug and norm_count:
-                print(f"[DEBUG] unit_first_pass_normalized: {norm_count} tokens")
+                    if tok.get("_origin") == "split_unit_candidate":
+                        # 원문 단위를 보존 표기만 (중복 방지용)
+                        txt = str(tok.get("text", "") or "")
+                        if txt and "raw_unit" not in tok:
+                            tok["raw_unit"] = txt
+                            marked += 1
+            if isDebug and marked:
+                print(f"[DEBUG] unit_first_pass_marked: {marked} tokens (no canonicalization at Step 4.x)")
         except Exception as _e:
             if isDebug:
-                print(f"[DEBUG] unit_first_pass_normalize_error: {_e}")
+                print(f"[DEBUG] unit_first_pass_mark_error: {_e}")
 
     # 4.5 값 경고 플래그 주석(경량) — 공백 없는 접미 H/L/N만
     # - 원문 text는 변경하지 않음

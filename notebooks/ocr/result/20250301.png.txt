@@ -1,0 +1,252 @@
+=== Output for 20250301.png ===
+Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20250301.png
+Generated on: 2025-10-23 02:38:19.956330 (Processing time: 00:23.39)
+
+🧾 Step 12: 포함/제외 tests 전체 (라인 순)
+code      | value |         value_conf | unit | reference_min | reference_max | drop_reason
+----------+-------+--------------------+------+---------------+---------------+------------
+RBC       |  6.06 | 0.9955528974533081 | M/µL |          6.54 |          12.2 |            
+HCT       |  27.5 | 0.9989006519317627 | %    |          30.3 |          52.3 |            
+HGB       |   8.3 | 0.9988470077514648 | g/dL |           9.8 |          16.2 |            
+MCV       |  45.4 | 0.9982872009277344 | fL   |          35.9 |          53.1 |            
+MCH       |  13.7 | 0.9989719986915588 | pg   |          11.8 |          17.3 |            
+MCHC      |  30.2 |  0.999228835105896 | g/dL |          28.1 |          35.8 |            
+RDW-CV    |  37.6 | 0.9989539384841919 | %    |          15.0 |          27.0 |            
+RETIC     |   0.9 | 0.9993045926094055 | %    |       UNKNOWN |       UNKNOWN |            
+RETIC     |  56.4 |  0.992863655090332 | K/µL |           3.0 |          50.0 |            
+RETIC-HGB |  11.0 | 0.9995615482330322 | pg   |          13.2 |          20.8 |            
+WBC       | 16.07 | 0.9966722726821899 | K/µL |          2.87 |         17.02 |            
+WBC-NEU   |  74.2 | 0.9990949630737305 | %    |       UNKNOWN |       UNKNOWN |            
+WBC-LYM   |  17.5 | 0.9994398355484009 | %    |       UNKNOWN |       UNKNOWN |            
+WBC-MONO  |   7.4 | 0.9994924664497375 | %    |       UNKNOWN |       UNKNOWN |            
+WBC-EOS   |   0.8 | 0.9988903999328613 | %    |       UNKNOWN |       UNKNOWN |            
+WBC-BASO  |   0.1 | 0.9971354007720947 | %    |       UNKNOWN |       UNKNOWN |            
+WBC-NEU   | 11.93 | 0.9994053840637207 | K/µL |           2.3 |         10.29 |            
+WBC-LYM   |  2.81 |  0.998871922492981 | K/µL |          0.92 |          6.88 |            
+WBC-MONO  |  1.19 | 0.9985529184341431 | K/µL |          0.05 |          0.67 |            
+WBC-EOS   |  0.13 | 0.9734405279159546 | K/µL |          0.17 |          1.57 |            
+WBC-BASO  |  0.01 | 0.9950643181800842 | K/µL |          0.01 |          0.26 |            
+PLT       | 108.0 | 0.9997698664665222 | K/µL |         151.0 |         600.0 |            
+MPV       |  19.3 | 0.9987585544586182 | fL   |          11.4 |          21.6 |            
+PCT       |  0.21 | 0.9995856881141663 | %    |          0.17 |          0.86 |            
+
+🏥 hospital_name: (None)
+👤 client_name  : (None)
+🐾 patient_name : (None)
+🗓  inspection_date: 2025-03-01
+
+🧾 Step 13: 최종 JSON
+code      | value | unit | reference_min | reference_max
+----------+-------+------+---------------+--------------
+RBC       |  6.06 | M/µL |          6.54 |          12.2
+HCT       |  27.5 | %    |          30.3 |          52.3
+HGB       |   8.3 | g/dL |           9.8 |          16.2
+MCV       |  45.4 | fL   |          35.9 |          53.1
+MCH       |  13.7 | pg   |          11.8 |          17.3
+MCHC      |  30.2 | g/dL |          28.1 |          35.8
+RDW-CV    |  37.6 | %    |          15.0 |          27.0
+RETIC     |   0.9 | %    |       UNKNOWN |       UNKNOWN
+RETIC     |  56.4 | K/µL |           3.0 |          50.0
+RETIC-HGB |  11.0 | pg   |          13.2 |          20.8
+WBC       | 16.07 | K/µL |          2.87 |         17.02
+WBC-NEU   |  74.2 | %    |       UNKNOWN |       UNKNOWN
+WBC-LYM   |  17.5 | %    |       UNKNOWN |       UNKNOWN
+WBC-MONO  |   7.4 | %    |       UNKNOWN |       UNKNOWN
+WBC-EOS   |   0.8 | %    |       UNKNOWN |       UNKNOWN
+WBC-BASO  |   0.1 | %    |       UNKNOWN |       UNKNOWN
+WBC-NEU   | 11.93 | K/µL |           2.3 |         10.29
+WBC-LYM   |  2.81 | K/µL |          0.92 |          6.88
+WBC-MONO  |  1.19 | K/µL |          0.05 |          0.67
+WBC-EOS   |  0.13 | K/µL |          0.17 |          1.57
+WBC-BASO  |  0.01 | K/µL |          0.01 |          0.26
+PLT       | 108.0 | K/µL |         151.0 |         600.0
+MPV       |  19.3 | fL   |          11.4 |          21.6
+PCT       |  0.21 | %    |          0.17 |          0.86
+
+📊 QA 요약:
+ - rows: 24
+ - truncated_rows: 0
+ - unit_canonical_coverage: (24, 24)
+ - result_norm_coverage: (24, 24)
+ - step12_removed_unknown: 0
+ - step12_removed_low_conf: 0
+ - step12_dedup_removed: 0
+ - step12_conf_threshold: 0.94
+
+🧾 Final JSON:
+{
+  "hospital_name": null,
+  "client_name": null,
+  "patient_name": null,
+  "inspection_date": "2025-03-01",
+  "tests": [
+    {
+      "code": "RBC",
+      "unit": "M/µL",
+      "reference_min": 6.54,
+      "reference_max": 12.2,
+      "value": 6.06
+    },
+    {
+      "code": "HCT",
+      "unit": "%",
+      "reference_min": 30.3,
+      "reference_max": 52.3,
+      "value": 27.5
+    },
+    {
+      "code": "HGB",
+      "unit": "g/dL",
+      "reference_min": 9.8,
+      "reference_max": 16.2,
+      "value": 8.3
+    },
+    {
+      "code": "MCV",
+      "unit": "fL",
+      "reference_min": 35.9,
+      "reference_max": 53.1,
+      "value": 45.4
+    },
+    {
+      "code": "MCH",
+      "unit": "pg",
+      "reference_min": 11.8,
+      "reference_max": 17.3,
+      "value": 13.7
+    },
+    {
+      "code": "MCHC",
+      "unit": "g/dL",
+      "reference_min": 28.1,
+      "reference_max": 35.8,
+      "value": 30.2
+    },
+    {
+      "code": "RDW-CV",
+      "unit": "%",
+      "reference_min": 15.0,
+      "reference_max": 27.0,
+      "value": 37.6
+    },
+    {
+      "code": "RETIC",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 0.9
+    },
+    {
+      "code": "RETIC",
+      "unit": "K/µL",
+      "reference_min": 3.0,
+      "reference_max": 50.0,
+      "value": 56.4
+    },
+    {
+      "code": "RETIC-HGB",
+      "unit": "pg",
+      "reference_min": 13.2,
+      "reference_max": 20.8,
+      "value": 11.0
+    },
+    {
+      "code": "WBC",
+      "unit": "K/µL",
+      "reference_min": 2.87,
+      "reference_max": 17.02,
+      "value": 16.07
+    },
+    {
+      "code": "WBC-NEU",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 74.2
+    },
+    {
+      "code": "WBC-LYM",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 17.5
+    },
+    {
+      "code": "WBC-MONO",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 7.4
+    },
+    {
+      "code": "WBC-EOS",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 0.8
+    },
+    {
+      "code": "WBC-BASO",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 0.1
+    },
+    {
+      "code": "WBC-NEU",
+      "unit": "K/µL",
+      "reference_min": 2.3,
+      "reference_max": 10.29,
+      "value": 11.93
+    },
+    {
+      "code": "WBC-LYM",
+      "unit": "K/µL",
+      "reference_min": 0.92,
+      "reference_max": 6.88,
+      "value": 2.81
+    },
+    {
+      "code": "WBC-MONO",
+      "unit": "K/µL",
+      "reference_min": 0.05,
+      "reference_max": 0.67,
+      "value": 1.19
+    },
+    {
+      "code": "WBC-EOS",
+      "unit": "K/µL",
+      "reference_min": 0.17,
+      "reference_max": 1.57,
+      "value": 0.13
+    },
+    {
+      "code": "WBC-BASO",
+      "unit": "K/µL",
+      "reference_min": 0.01,
+      "reference_max": 0.26,
+      "value": 0.01
+    },
+    {
+      "code": "PLT",
+      "unit": "K/µL",
+      "reference_min": 151.0,
+      "reference_max": 600.0,
+      "value": 108.0
+    },
+    {
+      "code": "MPV",
+      "unit": "fL",
+      "reference_min": 11.4,
+      "reference_max": 21.6,
+      "value": 19.3
+    },
+    {
+      "code": "PCT",
+      "unit": "%",
+      "reference_min": 0.17,
+      "reference_max": 0.86,
+      "value": 0.21
+    }
+  ]
+}

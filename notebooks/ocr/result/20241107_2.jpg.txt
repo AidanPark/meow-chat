@@ -1,0 +1,218 @@
+=== Output for 20241107_2.jpg ===
+Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20241107_2.jpg
+Generated on: 2025-10-23 04:24:42.923478 (Processing time: 00:15.76)
+
+🧾 Step 12: 포함/제외 tests 전체 (라인 순)
+code             |   value | value_conf | unit    | reference_min | reference_max | drop_reason  
+-----------------+---------+------------+---------+---------------+---------------+--------------
+MPV              |    16.9 |     0.9993 | fL      |       UNKNOWN |       UNKNOWN |              
+PDW              | UNKNOWN |     1.0000 | fL      |       UNKNOWN |       UNKNOWN | unknown_value
+PCT              |    0.01 |     0.9318 | %       |       UNKNOWN |       UNKNOWN |              
+RETHGB           |    15.3 |     0.9988 | pg      |          13.2 |          20.8 |              
+ALKP             |    36.0 |     0.9995 | U/L     |          14.0 |         192.0 |              
+ALT              |    70.0 |     0.9998 | U/L     |          12.0 |         115.0 |              
+BUN              |    15.0 |     0.9415 | mg/dL   |          16.0 |          33.0 |              
+CREA             |     0.2 |     0.9477 | mg/dL   |           0.5 |           1.8 |              
+ALB              |     2.3 |     0.9202 | g/dL    |           2.2 |           3.9 |              
+GLU              |   127.0 |     0.9385 | mg/dL   |          77.0 |         153.0 |              
+TP               |     6.1 |     0.8933 | g/dL    |           5.2 |           8.2 |              
+ALB/GLOB         |     0.6 |     0.9992 | UNKNOWN |       UNKNOWN |       UNKNOWN |              
+BUN/CREA         |    90.0 |     0.9981 | UNKNOWN |       UNKNOWN |       UNKNOWN |              
+GLOB             |     3.8 |     0.9176 | g/dL    |           2.8 |           4.8 |              
+Ca               |     8.3 |     0.8764 | mg/dL   |           7.9 |          11.3 |              
+CHOL             |   162.0 |     0.9722 | mg/dL   |          62.0 |         191.0 |              
+GGT              |     0.0 |     0.8889 | U/L     |           0.0 |           1.0 |              
+PHOS             |     5.7 |     0.9463 | mg/dL   |           4.5 |          10.4 |              
+TBIL             |     1.9 |     0.9386 | mg/dL   |           0.0 |           0.9 |              
+AMYL             | UNKNOWN |     1.0000 | U/L     |         500.0 |        1400.0 | unknown_value
+LIPA             | UNKNOWN |     1.0000 | U/L     |         200.0 |        1800.0 | unknown_value
+AST/GOT          | UNKNOWN |     1.0000 | U/L     |           0.0 |          32.0 | unknown_value
+Triglyceride(TG) | UNKNOWN |     1.0000 | mg/dL   |           8.0 |          54.0 | unknown_value
+SDMA             | UNKNOWN |     1.0000 | µg/dL   |           0.0 |          14.0 | unknown_value
+NH3              | UNKNOWN |     1.0000 | µg/dL   |           0.0 |          95.0 | unknown_value
+Fructosamine     | UNKNOWN |     1.0000 | µmol/L  |         191.0 |         349.0 | unknown_value
+Lactate          | UNKNOWN |     1.0000 | mmol/L  |           0.6 |           2.5 | unknown_value
+LDH              | UNKNOWN |     1.0000 | U/L     |           0.0 |        1128.0 | unknown_value
+SAA              |   107.2 |     0.9348 | µg/mL   |           5.0 |          10.0 |              
+CK               | UNKNOWN |     1.0000 | U/L     |          49.0 |         688.0 | unknown_value
+
+🏥 hospital_name: (None)
+👤 client_name  : (None)
+🐾 patient_name : (None)
+🗓  inspection_date: (None)
+
+🧾 Step 13: 최종 JSON
+code     | value | unit    | reference_min | reference_max
+---------+-------+---------+---------------+--------------
+MPV      |  16.9 | fL      |       UNKNOWN |       UNKNOWN
+PCT      |  0.01 | %       |       UNKNOWN |       UNKNOWN
+RETHGB   |  15.3 | pg      |          13.2 |          20.8
+ALKP     |  36.0 | U/L     |          14.0 |         192.0
+ALT      |  70.0 | U/L     |          12.0 |         115.0
+BUN      |  15.0 | mg/dL   |          16.0 |          33.0
+CREA     |   0.2 | mg/dL   |           0.5 |           1.8
+ALB      |   2.3 | g/dL    |           2.2 |           3.9
+GLU      | 127.0 | mg/dL   |          77.0 |         153.0
+TP       |   6.1 | g/dL    |           5.2 |           8.2
+ALB/GLOB |   0.6 | UNKNOWN |       UNKNOWN |       UNKNOWN
+BUN/CREA |  90.0 | UNKNOWN |       UNKNOWN |       UNKNOWN
+GLOB     |   3.8 | g/dL    |           2.8 |           4.8
+Ca       |   8.3 | mg/dL   |           7.9 |          11.3
+CHOL     | 162.0 | mg/dL   |          62.0 |         191.0
+GGT      |   0.0 | U/L     |           0.0 |           1.0
+PHOS     |   5.7 | mg/dL   |           4.5 |          10.4
+TBIL     |   1.9 | mg/dL   |           0.0 |           0.9
+SAA      | 107.2 | µg/mL   |           5.0 |          10.0
+
+📊 QA 요약:
+ - rows: 30
+ - truncated_rows: 0
+ - unit_canonical_coverage: (28, 30)
+ - result_norm_coverage: (19, 30)
+ - step12_removed_unknown: 11
+ - step12_removed_low_conf: 0
+ - step12_dedup_removed: 0
+ - step12_conf_threshold: 0.94
+
+🧾 Final JSON:
+{
+  "hospital_name": null,
+  "client_name": null,
+  "patient_name": null,
+  "inspection_date": null,
+  "tests": [
+    {
+      "code": "MPV",
+      "unit": "fL",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 16.9
+    },
+    {
+      "code": "PCT",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 0.01
+    },
+    {
+      "code": "RETHGB",
+      "unit": "pg",
+      "reference_min": 13.2,
+      "reference_max": 20.8,
+      "value": 15.3
+    },
+    {
+      "code": "ALKP",
+      "unit": "U/L",
+      "reference_min": 14.0,
+      "reference_max": 192.0,
+      "value": 36.0
+    },
+    {
+      "code": "ALT",
+      "unit": "U/L",
+      "reference_min": 12.0,
+      "reference_max": 115.0,
+      "value": 70.0
+    },
+    {
+      "code": "BUN",
+      "unit": "mg/dL",
+      "reference_min": 16.0,
+      "reference_max": 33.0,
+      "value": 15.0
+    },
+    {
+      "code": "CREA",
+      "unit": "mg/dL",
+      "reference_min": 0.5,
+      "reference_max": 1.8,
+      "value": 0.2
+    },
+    {
+      "code": "ALB",
+      "unit": "g/dL",
+      "reference_min": 2.2,
+      "reference_max": 3.9,
+      "value": 2.3
+    },
+    {
+      "code": "GLU",
+      "unit": "mg/dL",
+      "reference_min": 77.0,
+      "reference_max": 153.0,
+      "value": 127.0
+    },
+    {
+      "code": "TP",
+      "unit": "g/dL",
+      "reference_min": 5.2,
+      "reference_max": 8.2,
+      "value": 6.1
+    },
+    {
+      "code": "ALB/GLOB",
+      "unit": "UNKNOWN",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 0.6
+    },
+    {
+      "code": "BUN/CREA",
+      "unit": "UNKNOWN",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 90.0
+    },
+    {
+      "code": "GLOB",
+      "unit": "g/dL",
+      "reference_min": 2.8,
+      "reference_max": 4.8,
+      "value": 3.8
+    },
+    {
+      "code": "Ca",
+      "unit": "mg/dL",
+      "reference_min": 7.9,
+      "reference_max": 11.3,
+      "value": 8.3
+    },
+    {
+      "code": "CHOL",
+      "unit": "mg/dL",
+      "reference_min": 62.0,
+      "reference_max": 191.0,
+      "value": 162.0
+    },
+    {
+      "code": "GGT",
+      "unit": "U/L",
+      "reference_min": 0.0,
+      "reference_max": 1.0,
+      "value": 0.0
+    },
+    {
+      "code": "PHOS",
+      "unit": "mg/dL",
+      "reference_min": 4.5,
+      "reference_max": 10.4,
+      "value": 5.7
+    },
+    {
+      "code": "TBIL",
+      "unit": "mg/dL",
+      "reference_min": 0.0,
+      "reference_max": 0.9,
+      "value": 1.9
+    },
+    {
+      "code": "SAA",
+      "unit": "µg/mL",
+      "reference_min": 5.0,
+      "reference_max": 10.0,
+      "value": 107.2
+    }
+  ]
+}

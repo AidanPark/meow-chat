@@ -31,10 +31,20 @@ def fold_micro(s: str) -> str:
 
 
 def fold_liter(s: str) -> str:
-    """liter 표기를 대문자 L로 통일"""
+    """liter 표기를 대문자 L로 통일하되, 'mol' 같은 단위 내부의 l 은 보존한다.
+
+    안전 규칙:
+    - '/l' → '/L', '/dl' → '/dL', '/ml' → '/mL', '/ul' → '/uL' 등 슬래시 뒤 단위의 l 만 대문자화
+    - 'µl'/'μl' → 'µL'
+    - 그 외 'l' (예: 'mol', 'mmol') 은 변경하지 않음
+    """
     out = s
-    # l, ℓ -> L
-    out = out.replace("l", "L").replace("ℓ", "L")
+    if not isinstance(out, str):
+        return out
+    # µl/μl → µL
+    out = out.replace("µl", "µL").replace("μl", "µL")
+    # 슬래시 뒤 소문자 l 을 대문자 L 로 (예: /dl, /ml, /ul, /l)
+    out = re.sub(r"/(\s*[A-Za-zµμ]*?)l(\b)", lambda m: "/" + m.group(1) + "L" + m.group(2), out)
     return out
 
 
@@ -55,23 +65,49 @@ def normalize_unit_simple(unit: str) -> Optional[str]:
     if not u or u.upper() == "UNKNOWN":
         return None
     
+    # 특수 케이스 선(先) 처리: 장비 표기 분절로 '10 x3/µL'처럼 분리된 형태
+    # - '10 x3/µL', '10x3/µL', '10 ×3/µL', '10 x3/uL' 등은 모두 10^3/µL 의미로 간주
+    # - '10 x6/µL' 계열은 10^6/µL 의미
+    # 이 규칙은 값+단위 혼합 판단보다 먼저 적용해 오탐을 방지
+    if re.fullmatch(r"10\s*[x×]\s*3\s*/\s*(?:µ|μ|u)L", u, re.IGNORECASE):
+        u = "10^3/µL"
+    elif re.fullmatch(r"10\s*[x×]\s*6\s*/\s*(?:µ|μ|u)L", u, re.IGNORECASE):
+        u = "10^6/µL"
+
     # 값+단위 혼합 문자열 감지 (예: 'neg pos/n', '12.5 mg/dL')
     # 이런 경우 공격적 정규화 회피
     if _is_value_unit_mixed(u):
         return u  # 원문 보존
+
+    # 0) 명시적 equals 오버라이드 (규칙으로 해결되지 않는 케이스 보완)
+    eq = _apply_equals_overrides(u)
+    if eq is not None:
+        u = eq
     
-    # 1. micro 문자 통일 (µ, μ, u -> µ)
+    # 1) OCR 혼동 보정(우선 적용)
+    #    - 단위 필드 전용: 유사-단위 형태 점수 및 패턴 검사를 통과한 경우에만 수행
+    #    - 'mg/d1' → 'mg/dL', 'U/1' → 'U/L', 'ugD'/'ug/d1' → 'µg/dL', 'mmo1/L' → 'mmol/L' 등
+    #    - liter/micro 접기 전에 숫자↔문자 혼동을 바로잡아, 후속 단계의 정규화가 안정적으로 작동하도록 함.
+    u = _apply_ocr_confusion_fixes(u)
+
+    # 2) micro 문자 통일 (µ, μ, u -> µ)
     u = fold_micro(u)
-    
-    # 2. liter 문자 통일 (l, L, ℓ -> L)
+
+    # 3) liter 문자 통일 (l, L, ℓ -> L)
     u = fold_liter(u)
-    
-    # 3. 조건화된 공백 처리 (단위 내부 공백만 제거)
+
+    # 3.5) equals 오버라이드(후행 1회 더 시도):
+    #      fold_liter 이후 'ug/ml' -> 'ug/mL' 같은 중간 변환을 통과한 뒤 최종 보정 적용
+    eq2 = _apply_equals_overrides(u)
+    if eq2 is not None:
+        u = eq2
+
+    # 4) 조건화된 공백 처리 (단위 내부 공백만 제거)
     u = _normalize_unit_spaces(u)
-    
-    # 4. 접두어 정규화
+
+    # 5) 접두어 및 지수형 정규화(K/M 일원화 포함)
     u = _normalize_prefixes(u)
-    
+
     return u
 
 
@@ -190,6 +226,131 @@ def _normalize_prefixes(unit: str) -> str:
     return u
 
 
+def _apply_ocr_confusion_fixes(u: str) -> str:
+    """OCR에서 빈번한 문자-숫자 혼동을 보정합니다.
+
+    가드(모두 충족 또는 일부 조건 하에서만 적용):
+    - 단위 필드 전용: 유사-단위 형태인지 간단 점수로 확인(_looks_like_unit)
+    - 패턴·위치 제한: '/1'→'/L' 등 슬래시 뒤 위치, 전체 토큰 일치 등으로 한정
+    - 렉시콘 검증: 보정 결과가 reference/unit_lexicon의 canonical로 해석(resolve) 가능해야 함
+    - 최소 변경: 렉시콘 검증에 실패하면 원문 유지(가능한 가장 작은 변형만 허용)
+    """
+    if not u:
+        return u
+
+    s = u
+
+    # 단위-유사 형태 점수로 1차 거르기: 너무 일반 텍스트면 보정 스킵
+    if _looks_like_unit(s) < 1:
+        return s
+
+    def _resolve_canonical(token: str) -> Optional[str]:
+        try:
+            # 지연 임포트로 순환 의존 회피
+            from .reference.unit_lexicon import resolve_unit, get_unit_lexicon  # type: ignore
+            return resolve_unit(token, get_unit_lexicon())
+        except Exception:
+            return None
+
+    def _apply_if_valid(before: str, after: str) -> Optional[str]:
+        """보정 후보(after)가 렉시콘에서 해석 가능하면 after, 아니면 None 반환."""
+        if before == after:
+            return before
+        resolved = _resolve_canonical(after)
+        if resolved:
+            return after
+        return None
+
+    # 1) 전체 토큰 일치 기반 보정 (최소 변경, 강한 가드)
+    up = s.upper()
+    # ugD, µgD, μgD → µg/dL (전체 토큰 일치만 허용)
+    if up in {"UGD", "µGD", "ΜGD"}:  # 마지막은 그리스 문자 μ 대문자 취급 방어
+        cand = _apply_if_valid(s, "µg/dL")
+        if cand:
+            return cand
+
+    # ug/d1, ug/dl → µg/dL (전체 토큰 또는 분수 형태만)
+    if re.fullmatch(r"(?i)ug/d[1l]", s):
+        cand = _apply_if_valid(s, "µg/dL")
+        if cand:
+            return cand
+
+    # ug/dL → µg/dL (fold_micro에서 놓친 경우 보정)
+    if re.fullmatch(r"(?i)ug/dl", s):
+        cand = _apply_if_valid(s, "µg/dL")
+        if cand:
+            return cand
+
+    # 2) 위치 제한 보정: 분모의 '1'만 'L'로 교체
+    # mg/d1 → mg/dL, g/d1 → g/dL (단, 단위 전체가 해당 형태일 때만)
+    m = re.fullmatch(r"(?i)(mg|g)/d1", s)
+    if m:
+        base = m.group(1)
+        cand = _apply_if_valid(s, f"{base}/dL")
+        if cand:
+            return cand
+
+    # U/1, IU/1 → U/L, IU/L (전체 토큰 일치만)
+    m = re.fullmatch(r"(?i)(iu|u)/1", s)
+    if m:
+        base = m.group(1).upper()
+        cand = _apply_if_valid(s, f"{base}/L")
+        if cand:
+            return cand
+
+    # mmo1/L → mmol/L (전체 토큰 일치만)
+    if re.fullmatch(r"(?i)mmo1/l", s):
+        cand = _apply_if_valid(s, "mmol/L")
+        if cand:
+            return cand
+
+    # 위 보정들에 해당하지 않으면 원문 유지
+    return s
+
+def _apply_equals_overrides(u: str) -> Optional[str]:
+    """규칙으로 처리되지 않는 특정 토큰을 문자열 일치로 보정합니다.
+
+    요구사항 매핑(정확 일치):
+    - 'mg/d'   -> 'mg/dL'
+    - 'MG/'    -> 'mg/dL'
+    - 'umol'   -> 'µmol/L'
+    - 'mmol'   -> 'mmol/L'
+    - 'ug/mL'  -> 'µg/mL'
+
+    대소문자/공백은 그대로 비교(보수적).
+    """
+    if not isinstance(u, str):
+        return None
+    mapping = {
+        "mg/d": "mg/dL",
+        "MG/": "mg/dL",
+        "umol": "µmol/L",
+        "mmol": "mmol/L",
+        "ug/mL": "µg/mL",
+        "ug/ml": "µg/mL",
+        "G/DL": "g/dL",
+    }
+    return mapping.get(u)
+
+def _looks_like_unit(s: str) -> int:
+    """문자열이 '단위'로 보이는지 간단 점수로 판단.
+
+    반환 점수(0~2):
+    - +1: 분수 구분자('/', 'per') 포함 또는 지수('10^', '10³', 'x10') 포함
+    - +1: 알파벳+L(리터), micro(µ/μ/u) 또는 g/mg/ug 등 질량 접두 흔적 포함
+    - 0: 그 외
+    """
+    if not isinstance(s, str) or not s.strip():
+        return 0
+    score = 0
+    t = s.strip()
+    if "/" in t or re.search(r"(?i)(per|x10|10\^)", t):
+        score += 1
+    if re.search(r"(?i)(mg|ug|g|mol|mmol|iu|u/l|µ|μ|L|/l)", t):
+        score += 1
+    return score
+
+
 def test_normalize_unit_simple():
     """테스트 함수"""
     test_cases = [
@@ -204,7 +365,29 @@ def test_normalize_unit_simple():
         ("g/L", "g/L"),
         ("%", "%"),
         ("U/L", "U/L"),
-        ("10^6/µL", "M/µL"),
+    ("10^6/µL", "M/µL"),
+        
+    # 명시적 equals 오버라이드
+    ("mg/d", "mg/dL"),
+    ("MG/", "mg/dL"),
+    ("umol", "µmol/L"),
+    ("mmol", "mmol/L"),
+    ("ug/mL", "µg/mL"),
+    ("ug/ml", "µg/mL"),
+
+        # OCR 혼동 보정
+        ("ugD", "µg/dL"),
+        ("ug/d1", "µg/dL"),
+        ("ug/dL", "µg/dL"),
+        ("mg/d1", "mg/dL"),
+        ("U/1", "U/L"),
+        # IU/1 은 렉시콘에 IU/L 이 없으면 보정하지 않음(가드)
+        # 기대값을 동적으로 설정해 검증 환경 의존성을 제거
+        ("IU/1", (lambda: (lambda _r: ("IU/L" if _r else "IU/1"))(
+            __import__('importlib').import_module('app.services.analysis.reference.unit_lexicon').resolve_unit('IU/L',
+                __import__('importlib').import_module('app.services.analysis.reference.unit_lexicon').get_unit_lexicon())
+        ))()),
+        ("mmo1/L", "mmol/L"),
         
         # 값+단위 혼합 케이스 (보존되어야 함)
         ("neg pos/n", "neg pos/n"),  # ✓ 보존
@@ -224,9 +407,11 @@ def test_normalize_unit_simple():
     
     print("=== Enhanced Unit Normalizer Test ===")
     for input_unit, expected in test_cases:
+        # 동적 기대값 람다 처리
+        exp = expected() if callable(expected) else expected
         result = normalize_unit_simple(input_unit)
-        status = "✓" if result == expected else "✗"
-        print(f"{status} '{input_unit}' -> '{result}' (expected: '{expected}')")
+        status = "✓" if result == exp else "✗"
+        print(f"{status} '{input_unit}' -> '{result}' (expected: '{exp}')")
 
 
 __all__ = [

@@ -2205,10 +2205,10 @@ class LabTableExtractor:
             return [" ".join(items).strip() for items in cells]
 
         rows: List[Dict[str, Any]] = []
-        for line in body_lines:
+        for i, line in enumerate(body_lines):
             toks = _tokens_with_centers(line)
             cells = _assign_to_bands(toks, bands)
-            rows.append({"_cells": cells, "_bands": bands})
+            rows.append({"_cells": cells, "_bands": bands, "_line_idx": i})
 
         return rows
 
@@ -2253,6 +2253,13 @@ class LabTableExtractor:
             cells_filled = [c if (isinstance(c, str) and c.strip()) else "UNKNOWN" for c in cells]
 
             out: Dict[str, Any] = {"_cells": cells_filled}
+            # 원본 밴드/라인 인덱스 보존
+            bands = row.get("_bands")
+            if bands:
+                out["_bands"] = bands
+            line_idx = row.get("_line_idx")
+            if isinstance(line_idx, int):
+                out["_line_idx"] = line_idx
             src_tokens: Dict[str, Any] = {}
 
             if role_to_idx:
@@ -2271,6 +2278,73 @@ class LabTableExtractor:
                         out[role] = val
                         if role in ("min", "max") and isinstance(val, str) and val:
                             src_tokens[role] = {"text": val, "_origin": "geom_banded"}
+
+            # 선택된 result 값에 대해, 실제 토큰(_src_tokens['result'])을 Step 8 시점에 고정 저장
+            try:
+                res_info = header_roles.get("result") if isinstance(header_roles, dict) else None
+                res_col = int(res_info.get("col_index", -1)) if isinstance(res_info, dict) else -1
+                _res_val = out.get("result")
+                has_result_val = (isinstance(_res_val, str) and _res_val.strip().lower() != "unknown")
+                # 밴드/라인 정보가 있어야 안전하게 찾을 수 있음
+                if has_result_val and isinstance(res_col, int) and res_col >= 0:
+                    bands = out.get("_bands")
+                    line_idx = out.get("_line_idx")
+                    if isinstance(bands, list) and isinstance(line_idx, int) and 0 <= line_idx < len(body_lines) and 0 <= res_col < len(bands):
+                        L, R = bands[res_col]
+                        line = body_lines[line_idx]
+
+                        # 숫자 정규화: result 문자열에서 선행 숫자 부분만 추출
+                        def _norm_num_str(s: Optional[str]) -> Optional[str]:
+                            if not s or not isinstance(s, str):
+                                return None
+                            t = s.strip().replace("·", ".").replace(",", ".")
+                            m = re.match(r"^[+-]?\d+(?:\.\d+)?", t)
+                            return m.group(0) if m else None
+
+                        target_num = _norm_num_str(out.get("result"))
+
+                        best_tok = None
+                        best_conf = None
+                        # 라인 내에서 결과 밴드에 속한 숫자형 토큰을 탐색
+                        if isinstance(line, (list, tuple)):
+                            for tok in line:
+                                try:
+                                    if not isinstance(tok, dict):
+                                        continue
+                                    txt = str(tok.get("text", "") or "").strip()
+                                    if not txt:
+                                        continue
+                                    xl = tok.get("x_left"); xr = tok.get("x_right")
+                                    if not isinstance(xl, (int, float)) or not isinstance(xr, (int, float)):
+                                        continue
+                                    xc = (float(xl) + float(xr)) / 2.0
+                                    if not (L <= xc < R):
+                                        continue
+                                    # 숫자형만 고려
+                                    m = re.match(r"^[+-]?\d+(?:[.,]\d+)?", txt.replace("·", ".").replace(",", "."))
+                                    if not m:
+                                        continue
+                                    num_txt = m.group(0).replace(",", ".")
+                                    conf = tok.get("confidence")
+                                    # 1순위: 숫자값이 target과 정확히 일치하는 토큰
+                                    if target_num and num_txt == target_num and isinstance(conf, (int, float)):
+                                        best_tok = tok
+                                        best_conf = float(conf)
+                                        break
+                                    # 2순위: 밴드 내 숫자형 중 최고 신뢰도
+                                    if isinstance(conf, (int, float)):
+                                        cf = float(conf)
+                                        if best_conf is None or cf > best_conf:
+                                            best_conf = cf
+                                            best_tok = tok
+                                except Exception:
+                                    continue
+                        if best_tok is not None:
+                            # 원본 토큰을 그대로 보존(디버깅 용도)
+                            src_tokens.setdefault("result", best_tok)
+            except Exception:
+                # 토큰 고정에 실패해도 다른 로직은 계속 진행
+                pass
 
             if src_tokens:
                 out["_src_tokens"] = src_tokens
@@ -2559,14 +2633,16 @@ class LabTableExtractor:
     # Step 11: Unit/Result normalization
     # -----------------------
     def _normalize_unit_and_result(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """간단한 unit 정규화(접두어 제거)와 result 숫자형 문자열 정리.
+        """Unit/Result 최종 정규화(단일 책임 지점) + 숫자 문자열 정리.
 
-        정책(간소화):
+        정책(일원화):
+        - 본 단계가 단위 정규화의 유일한 확정 지점입니다. (Step 4.x에서는 텍스트 변경 없음)
         - unit 정규화:
-          · normalize_unit_simple 로 접두어 제거만 수행하여 unit_canonical 필드에 기록, unit은 원문 보존.
+          · normalize_unit_simple 을 사용해 접두어(K/M), micro/L 접기, 그리고 OCR 혼동(ugD→µg/dL, mg/d1→mg/dL 등)을 한 번에 처리합니다.
+          · 성공 시 unit_canonical에 저장하고 unit(원문)은 보존합니다.
           · 정규화 실패 시 unit은 그대로 두되 unit_canonical 없음.
         - result 정규화:
-          · row에 result가 문자열이면 숫자 부분만 추출.
+          · row.result가 문자열이면 숫자 부분만 추출.
           · 쉼표/중점 대체(, · → .), 앞뒤 공백 제거, 접두부 +/− 허용.
           · 숫자 파싱 실패 시 원문 유지(result_norm 없음).
         - Min/Max도 숫자 문자열로 강제(result와 동일 규칙)하여 min_norm/max_norm에 기록(존재할 경우).
@@ -2597,7 +2673,7 @@ class LabTableExtractor:
         for row in rows:
             try:
                 new_row = dict(row)
-                # Unit canonical - 간단한 정규화 사용
+                # Unit canonical - 최종 정규화(단일 지점)
                 u = new_row.get("unit")
                 if isinstance(u, str) and u.strip() and u.upper() != "UNKNOWN" and normalize_unit_simple is not None:
                     try:
@@ -3412,10 +3488,8 @@ class LabTableExtractor:
 
         출력 컬럼: code | value_conf | value | unit | reference_min | reference_max | drop_reason
 
-        규칙(원 구현과 동일한 휴리스틱/임계값을 적용):
-        - value_conf = 헤더 result confidence(기본 0.5)
-                       + (값이 참조범위 내면 +0.1, 아니면 -0.1)
-                       + (unit 존재 +0.05, 없으면 -0.05)  → [0..1] 클리핑, 소수 3자리
+        규칙:
+        - value_conf 표시: 가능하면 Step 8에서 고정 저장한 result 토큰의 OCR confidence를 사용하며, 없으면 헤더 result 열의 column-level confidence를 사용합니다(표시 시 소숫점 네 자리에서 자르기; 반올림 없음).
         - drop_reason은 다음 순서로 부여:
           1) unknown_value → value가 None
           2) low_confidence → value_conf < conf_threshold(기본 0.94)
@@ -3431,6 +3505,7 @@ class LabTableExtractor:
             step11_rows = intermediates.get("step11_rows") or []
             header_roles = intermediates.get("header_roles") or {}
             stats = intermediates.get("step12_stats") or {}
+            body_lines = intermediates.get("body_lines") or []
 
             # 임계값: step12에서 사용한 값이 있으면 그 값을 따름
             try:
@@ -3438,12 +3513,128 @@ class LabTableExtractor:
             except Exception:
                 conf_threshold = 0.94
 
-            # 결과 열의 column-level confidence를 기본값으로 사용
+            # 결과 열의 column-level confidence를 그대로 사용
             try:
                 res_info = header_roles.get("result") if isinstance(header_roles, dict) else None
                 base_conf: float = float(res_info.get("confidence", 0.5)) if isinstance(res_info, dict) else 0.5
             except Exception:
                 base_conf = 0.5
+
+            # 행별 value 토큰의 OCR confidence 추출 (우선순위: _src_tokens['result'] → 라인/밴드 탐색)
+            import math
+            def _conf_trunc4_str(x: Any) -> str:
+                try:
+                    f = float(x)
+                    if f < 0.0:
+                        f = 0.0
+                    elif f > 1.0:
+                        f = 1.0
+                    f4 = math.trunc(f * 10000) / 10000.0
+                    return f"{f4:.4f}"
+                except Exception:
+                    return ""
+            num_re = re.compile(r"^\s*([+-]?\d+(?:[.,]\d+)?)")
+            def _norm_num_str(s: Optional[str]) -> Optional[str]:
+                if not s or not isinstance(s, str):
+                    return None
+                t = s.strip().replace("·", ".").replace(",", ".")
+                m = re.match(r"^[+-]?\d+(?:\.\d+)?", t)
+                return m.group(0) if m else None
+
+            def _value_token_conf_for_row(row_obj: Dict[str, Any]) -> Optional[float]:
+                try:
+                    # 0) Step 8에서 고정 저장된 토큰 우선 사용
+                    st = row_obj.get("_src_tokens") if isinstance(row_obj.get("_src_tokens"), dict) else None
+                    if isinstance(st, dict):
+                        tok = st.get("result")
+                        if isinstance(tok, dict):
+                            cf = tok.get("confidence")
+                            if isinstance(cf, (int, float)):
+                                try:
+                                    fv = float(cf)
+                                    return max(0.0, min(1.0, fv))
+                                except Exception:
+                                    pass
+                    # 기준 숫자 문자열: result_norm 우선, 없으면 result에서 숫자 부분
+                    target = row_obj.get("result_norm") if isinstance(row_obj.get("result_norm"), str) else None
+                    if not target:
+                        target = _norm_num_str(row_obj.get("result") if isinstance(row_obj.get("result"), str) else None)
+                    if not target:
+                        return None
+                    # 특정 밴드(결과 열)에 속한 토큰만 대상으로 탐색
+                    line_idx = row_obj.get("_line_idx")
+                    bands = row_obj.get("_bands")
+                    res_info = header_roles.get("result") if isinstance(header_roles, dict) else None
+                    res_col = int(res_info.get("col_index", -1)) if isinstance(res_info, dict) else -1
+                    if not (isinstance(line_idx, int) and isinstance(bands, list) and 0 <= res_col < len(bands)):
+                        # 밴드 정보를 사용할 수 없으면 라인 전체에서 탐색(폴백)
+                        line = body_lines[line_idx] if (isinstance(body_lines, list) and isinstance(line_idx, int) and 0 <= line_idx < len(body_lines)) else None
+                        if not line:
+                            return None
+                        for tok in (line or []):
+                            try:
+                                if not isinstance(tok, dict):
+                                    continue
+                                txt = str(tok.get("text", "") or "").strip()
+                                if not txt:
+                                    continue
+                                m = num_re.match(txt.replace("·", ".").replace(",", "."))
+                                if not m:
+                                    continue
+                                num_txt = m.group(1)
+                                if num_txt == target:
+                                    conf = tok.get("confidence")
+                                    if isinstance(conf, (int, float)):
+                                        try:
+                                            fv = float(conf)
+                                            return max(0.0, min(1.0, fv))
+                                        except Exception:
+                                            return None
+                            except Exception:
+                                continue
+                        return None
+
+                    # 밴드 한정 탐색
+                    L, R = bands[res_col]
+                    line = body_lines[line_idx] if (isinstance(body_lines, list) and 0 <= line_idx < len(body_lines)) else None
+                    if not line:
+                        return None
+                    # line은 토큰들의 리스트로 가정
+                    best_conf = None
+                    for tok in (line or []):
+                        try:
+                            if not isinstance(tok, dict):
+                                continue
+                            txt = str(tok.get("text", "") or "").strip()
+                            if not txt:
+                                continue
+                            xl = tok.get("x_left"); xr = tok.get("x_right")
+                            if not isinstance(xl, (int, float)) or not isinstance(xr, (int, float)):
+                                continue
+                            xc = (float(xl) + float(xr)) / 2.0
+                            if not (L <= xc < R):
+                                continue
+                            m = num_re.match(txt.replace("·", ".").replace(",", "."))
+                            if not m:
+                                continue
+                            num_txt = m.group(1)
+                            conf = tok.get("confidence")
+                            if num_txt == target and isinstance(conf, (int, float)):
+                                try:
+                                    fv = float(conf)
+                                    return max(0.0, min(1.0, fv))
+                                except Exception:
+                                    return None
+                            # 후보 중 가장 높은 confidence를 보조 선택지로 저장
+                            if isinstance(conf, (int, float)):
+                                cf = max(0.0, min(1.0, float(conf)))
+                                if best_conf is None or cf > best_conf:
+                                    best_conf = cf
+                        except Exception:
+                            continue
+                    return best_conf
+                except Exception:
+                    return None
 
             # step11_rows가 없으면 이전 "제외 전용" 미리보기로 폴백
             if not step11_rows:
@@ -3471,7 +3662,8 @@ class LabTableExtractor:
                     else:
                         reason_s = _d(reason)
                     conf = t.get("_value_conf")
-                    conf_s = f"{conf:.3f}" if isinstance(conf, (int, float)) else ""
+                    # 표시: 소숫점 네 자리에서 자르기(반올림 없음)
+                    conf_s = _conf_trunc4_str(conf) if isinstance(conf, (int, float)) else ""
                     data.append([
                         _d(t.get("code")),
                         _d(t.get("value")),
@@ -3518,7 +3710,7 @@ class LabTableExtractor:
 
             # 1) Step11 기준(라인 순)으로 행 구성 + value_conf/1·2차 필터 사유 산정
             rows: List[Dict[str, Any]] = []
-            for r in step11_rows:
+            for idx, r in enumerate(step11_rows):
                 try:
                     code = r.get("name")
                     unit_raw = r.get("unit") if isinstance(r.get("unit"), str) else None
@@ -3529,24 +3721,14 @@ class LabTableExtractor:
                     rmin = _to_float(r.get("min_norm"))
                     rmax = _to_float(r.get("max_norm"))
 
-                    # value_conf 휴리스틱
-                    conf = base_conf
+                    # value_conf: result 열의 column-level confidence
                     try:
-                        if isinstance(val, (int, float)) and isinstance(rmin, (int, float)) and isinstance(rmax, (int, float)):
-                            conf += 0.1 if (rmin <= val <= rmax) else -0.1
+                        conf = max(0.0, min(1.0, float(base_conf)))
                     except Exception:
-                        pass
-                    try:
-                        if isinstance(unit, str) and unit.strip():
-                            conf += 0.05
-                        else:
-                            conf -= 0.05
-                    except Exception:
-                        pass
-                    try:
-                        conf = max(0.0, min(1.0, float(conf)))
-                    except Exception:
-                        conf = 0.5
+                        conf = 0.0
+
+                    # 표시용 per-row value 토큰 confidence (가능하면 사용, 없으면 None)
+                    tok_conf = _value_token_conf_for_row(r)
 
                     reasons: List[str] = []
                     if val is None:
@@ -3562,6 +3744,7 @@ class LabTableExtractor:
                         "reference_max": rmax,
                         "value": val,
                         "_conf": conf,
+                        "_tok_conf": tok_conf,
                         "_reasons": reasons,
                     })
                 except Exception:
@@ -3572,19 +3755,30 @@ class LabTableExtractor:
                         "reference_max": None,
                         "value": None,
                         "_conf": 0.5,
+                        "_tok_conf": None,
                         "_reasons": ["parse_error"],
                     })
 
-            # 2) 중복 코드 규칙 적용: 앞선 항목에 duplicated_code_kept_last 부여(다른 사유 없을 때만)
-            last_index: Dict[str, int] = {}
-            for idx, t in enumerate(rows):
+            # 2) 중복 코드 규칙 적용: (code, unit) 기준으로 마지막만 포함
+            #    - 단위가 비어있으면 code만으로 판정
+            last_index: Dict[tuple, int] = {}
+            def _dup_key(t: Dict[str, Any]) -> Optional[tuple]:
                 c = t.get("code")
-                if isinstance(c, str) and c.strip():
-                    last_index[c] = idx
+                if not (isinstance(c, str) and c.strip()):
+                    return None
+                u = t.get("unit")
+                if isinstance(u, str) and u.strip():
+                    return (c.strip(), u.strip())
+                return (c.strip(), None)
+
             for idx, t in enumerate(rows):
-                c = t.get("code")
-                if isinstance(c, str) and c.strip():
-                    if not t["_reasons"] and last_index.get(c) != idx:
+                k = _dup_key(t)
+                if k is not None:
+                    last_index[k] = idx
+            for idx, t in enumerate(rows):
+                k = _dup_key(t)
+                if k is not None:
+                    if not t["_reasons"] and last_index.get(k) != idx:
                         t["_reasons"].append("duplicated_code_kept_last")
 
             # 3) 테이블 렌더링
@@ -3602,7 +3796,9 @@ class LabTableExtractor:
             data: List[List[str]] = []
             for t in rows:
                 reason_s = ",".join(t["_reasons"]) if t["_reasons"] else ""
-                conf_s = f"{t['_conf']:.3f}"
+                # 표시: value 토큰 신뢰도가 있으면 그것을 사용, 없으면 column-level 사용 (소숫점 네 자리에서 자르기)
+                disp_conf = t.get("_tok_conf") if isinstance(t.get("_tok_conf"), (int, float)) else t.get("_conf")
+                conf_s = _conf_trunc4_str(disp_conf) if isinstance(disp_conf, (int, float)) else ""
                 data.append([
                     _disp(t.get("code")),
                     _disp(t.get("value")),
@@ -3787,28 +3983,11 @@ class LabTableExtractor:
             base_conf = 0.5
 
         def compute_conf(t: Dict[str, Any]) -> float:
-            conf = base_conf
+            """행별 value_conf는 결과 열의 column-level confidence를 그대로 사용한다.
+            이전의 범위/단위 기반 보정 휴리스틱은 제거.
+            """
             try:
-                val = t.get("value")
-                rmin = t.get("reference_min")
-                rmax = t.get("reference_max")
-                if isinstance(val, (int, float)) and isinstance(rmin, (int, float)) and isinstance(rmax, (int, float)):
-                    if rmin <= val <= rmax:
-                        conf += 0.1
-                    else:
-                        conf -= 0.1
-            except Exception:
-                pass
-            try:
-                unit = t.get("unit")
-                if isinstance(unit, str) and unit.strip():
-                    conf += 0.05
-                else:
-                    conf -= 0.05
-            except Exception:
-                pass
-            try:
-                return max(0.0, min(1.0, float(conf)))
+                return max(0.0, min(1.0, float(base_conf)))
             except Exception:
                 return 0.5
 
@@ -3846,18 +4025,34 @@ class LabTableExtractor:
                 pass
             filtered2.append(t)
 
-        # 3) De-duplicate by code (keep the last occurrence)
+        # 3) De-duplicate by (code, unit) when unit is available; else by code (keep the last occurrence)
+        #    - 퍼센트와 절대치(예: RETIC% vs RETIC#)가 공존하는 경우, 단위가 다르면 서로 다른 측정으로 간주해 보존합니다.
+        #    - 단위가 명확하지 않은(비어있거나 None) 경우에는 기존대로 code만으로 중복 판정합니다.
         dedup_removed = 0
-        last_index: Dict[str, int] = {}
-        for idx, t in enumerate(filtered2):
+        # 마지막 인덱스 기록: key = (code, unit_or_none)
+        last_index: Dict[tuple, int] = {}
+        def _dedup_key(t: Dict[str, Any]) -> Optional[tuple]:
             c = t.get("code")
-            if isinstance(c, str) and c.strip():
-                last_index[c] = idx
+            if not (isinstance(c, str) and c.strip()):
+                return None
+            u = t.get("unit")
+            u_key: Optional[str]
+            if isinstance(u, str) and u.strip():
+                u_key = u.strip()
+            else:
+                u_key = None
+            return (c.strip(), u_key)
+
+        for idx, t in enumerate(filtered2):
+            k = _dedup_key(t)
+            if k is not None:
+                last_index[k] = idx
+
         result: List[Dict[str, Any]] = []
         for idx, t in enumerate(filtered2):
-            c = t.get("code")
-            if isinstance(c, str) and c.strip():
-                if last_index.get(c) != idx:
+            k = _dedup_key(t)
+            if k is not None:
+                if last_index.get(k) != idx:
                     dedup_removed += 1
                     rec = dict(t)
                     rec["_excluded_reason"] = ["duplicated_code_kept_last"]
