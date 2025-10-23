@@ -336,3 +336,10 @@ meow-chat/
 
 현재 Document Loaders, Embeddings, Vector Store, LangGraph 등 커리큘럼 핵심 주제를 포함하고 있습니다.
 팀원별로 OCR·데이터 로더, VectorDB·RAG 설계, LangGraph 워크플로우, Memory/Persona 설계를 분담합니다.
+
+
+데이타를 모아서 뭘 할수 있는가
+
+생성된 결과의 검증은?
+
+

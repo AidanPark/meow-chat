@@ -1,10 +1,13 @@
 """
 라인 전처리 모듈 (4.x 단계)
 
-- OCR 결과에서 토큰을 추출(기하 포함)
-- y-기반 라인 인덱스 부여
-- 라인 단위 그룹핑
-- 값/단위 분리(보존-분리)
+- 4.1: OCR 결과에서 토큰 추출(기하 포함)
+- 4.2: y-기반 라인 인덱스 부여
+- 4.3: 라인 단위 그룹핑
+- 4.4: 라인 선두(Name 열) 분리 토큰 병합(괄호형 등) + 괄호 앞 공백 제거
+- 4.5: 값/단위 분리(보존-분리)
+- 4.6: 값 경고 플래그(H/L/N) 경량 주석
+- 4.7: 상태 토큰 제거(NORMAL/LOW/HIGH)
 
 구성 옵션을 가진 클래스 API(LinePreprocessor)와 간단한 함수형 API를 함께 제공합니다.
 PaddleOCRService에 있던 동일 로직을 모듈로 분리하여 재사용성을 높였습니다.
@@ -361,7 +364,12 @@ def extract_and_group_lines(
     isDebug: bool = True,
     unit_lexicon: Optional[Dict[str, object]] = None,
 ) -> List[List[Dict]]:
-    """통합 실행: 토큰 추출 → 라인 인덱스 부여 → 라인 그룹핑 → 값/단위 분리.
+    """통합 실행: 4.1~4.7 단계 수행.
+
+    순서:
+      4.1 토큰 추출 → 4.2 라인 인덱스 → 4.3 라인 그룹핑 →
+      4.4 선두 이름 병합(괄호형 등) → 4.5 값/단위 분리 →
+      4.6 값 경고 플래그 주석 → 4.7 상태 토큰 제거
 
     기하 정보(x_left/x_right, y_top/y_bottom/center, line_index)는 항상 유지되어
     후속 단계(예: 기하 기반 Filling)가 활용할 수 있습니다.
@@ -395,7 +403,144 @@ def extract_and_group_lines(
     if isDebug:
         _dbg_print("grouped_lines_before_split", grouped)
 
-    # 값/단위 분리
+    # 4.4 라인 선두(Name 열) 분리 토큰 병합
+    # - 괄호형: 예) POTASSIUM | (K+) → POTASSIUM(K+)
+    # - 병합은 라인 선두(Name 영역)에서만 시도하며, 숫자/범위/단위/헤더 키워드를 만나면 중단
+    # - 지오메트리(x-gap) 보수 임계 하에서만 수행
+    paren_re = re.compile(r"^\([^)]{1,12}\)$")
+
+    def _int_or_none(v):
+        try:
+            return int(v) if v is not None else None
+        except Exception:
+            try:
+                return int(round(float(v)))
+            except Exception:
+                return None
+
+    def _median_gap_x(tokens: List[Dict]) -> int:
+        # x_left 기준 정렬 후 인접 간격의 중앙값
+        xs = []
+        for t in tokens:
+            xl = _int_or_none(t.get("x_left"))
+            xr = _int_or_none(t.get("x_right"))
+            if xl is not None and xr is not None and xr >= xl:
+                xs.append((xl, xr))
+        if len(xs) < 2:
+            return 0
+        xs.sort(key=lambda p: p[0])
+        gaps: List[int] = []
+        for i in range(len(xs) - 1):
+            g = xs[i + 1][0] - xs[i][1]
+            if g >= 0:
+                gaps.append(int(g))
+        if not gaps:
+            return 0
+        gaps.sort()
+        return gaps[len(gaps)//2]
+
+    def _is_numeric_or_range_or_unit(text: str) -> bool:
+        s = (text or "").strip().replace("·", ".").replace(",", ".")
+        if re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?(?:[HhLlNn])?", s):
+            return True
+        if re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?\s*[-–~]\s*[+-]?\d+(?:[.,]\d+)?", s):
+            return True
+        unit_pat = re.compile(
+            r"^(?:%|‰|g/dl|mg/dl|u/l|iu/l|mmol/l|meq/l|fL|fl|pg|ng/ml|k/µl|k/μl|k/u?l|m/µl|m/μl|m/u?l|10\^?\d+/(?:l|ul|µl|μl))$",
+            re.IGNORECASE,
+        )
+        if unit_pat.match(s) or ("%" in s and len(s) <= 4):
+            return True
+        return False
+
+    def _merge_name_fragments(lines_2d: List[List[Dict]]) -> List[List[Dict]]:
+        merged_lines: List[List[Dict]] = []
+        for line in lines_2d:
+            if not line or len(line) < 2:
+                merged_lines.append(line)
+                continue
+            # 선두 영역에서만 후보 탐색
+            med_gap = _median_gap_x(line)
+            gap_thresh = max(14, int(round((med_gap or 0) * 1.6)))
+            # 인접 두 토큰만 보수적으로 병합 (괄호형 전용)
+            i = 0
+            changed = False
+            new_line = list(line)
+            while i < len(new_line) - 1:
+                t0 = new_line[i]
+                t1 = new_line[i + 1]
+                s0 = str(t0.get("text", "") or "").strip()
+                s1 = str(t1.get("text", "") or "").strip()
+                # 경계 신호를 만나면 선두 병합 탐색 종료
+                if i == 0 and _is_numeric_or_range_or_unit(s0):
+                    break
+                # 괄호형만 대상: (K+), (Na+), (Magnesium) ... 길이<=12
+                if paren_re.match(s1) and not _is_numeric_or_range_or_unit(s0):
+                    xl0 = _int_or_none(t0.get("x_left")); xr0 = _int_or_none(t0.get("x_right"))
+                    xl1 = _int_or_none(t1.get("x_left")); xr1 = _int_or_none(t1.get("x_right"))
+                    if None not in (xl0, xr0, xl1, xr1) and xr0 is not None and xl1 is not None:
+                        gap = xl1 - xr0
+                        if gap <= gap_thresh:
+                            # 병합 텍스트: 괄호 앞 공백 제거 규칙 적용
+                            merged_text = f"{s0}{s1}"
+                            merged_tok = dict(t0)
+                            merged_tok["text"] = merged_text
+                            merged_tok["_origin"] = "name_merge_4_4"
+                            # 기하는 min/max로 확장
+                            # 안전 정수화 후 좌우 경계 확장
+                            l0 = int(xl0) if xl0 is not None else 0
+                            r0v = int(xr0) if xr0 is not None else l0
+                            l1 = int(xl1) if xl1 is not None else 0
+                            r1v = int(xr1) if xr1 is not None else l1
+                            merged_tok["x_left"] = min(l0, l1)
+                            merged_tok["x_right"] = max(r0v, r1v)
+                            yts = [v for v in (t0.get("y_top"), t1.get("y_top")) if isinstance(v, (int, float))]
+                            ybs = [v for v in (t0.get("y_bottom"), t1.get("y_bottom")) if isinstance(v, (int, float))]
+                            if yts:
+                                merged_tok["y_top"] = int(min(yts))
+                            if ybs:
+                                merged_tok["y_bottom"] = int(max(ybs))
+                            # 교체
+                            new_line = new_line[:i] + [merged_tok] + new_line[i+2:]
+                            changed = True
+                            # 선두만 처리하고 종료(보수 운영)
+                            break
+                # 다음으로 진행, 단 선두 병합만 허용하므로 i 증가 시도 후 즉시 종료
+                break
+            merged_lines.append(new_line)
+            if isDebug and changed:
+                try:
+                    before = " | ".join([str(x.get("text", "")) for x in line])
+                    after = " | ".join([str(x.get("text", "")) for x in new_line])
+                    print(f"[DEBUG] 4.4 name_merge: {before}  →  {after}")
+                except Exception:
+                    pass
+        return merged_lines
+
+    grouped = _merge_name_fragments(grouped)
+    if isDebug:
+        _dbg_print("grouped_lines_after_4_4_name_merge", grouped)
+
+    # 4.4-보강: 첫 번째 컬럼 텍스트에서 괄호 앞 공백 제거 (예: 'SODIUM (Na+)' → 'SODIUM(Na+)')
+    try:
+        fixed = 0
+        for line in grouped:
+            if not line:
+                continue
+            first = line[0]
+            if isinstance(first, dict):
+                txt = str(first.get("text", "") or "")
+                new_txt = re.sub(r"\s+\(", "(", txt)
+                if new_txt != txt:
+                    first["text"] = new_txt
+                    first.setdefault("_first_col_norm", []).append("no_space_before_paren")
+                    fixed += 1
+        if isDebug and fixed:
+            print(f"[DEBUG] 4.4 first_col_paren_space_removed: {fixed} lines")
+    except Exception:
+        pass
+
+    # 4.5 값/단위 분리
     # 공백 기반 분리 + 공백 없는 붙어있는 형태도 분리(예: 1.9mg/dL, 7.34%)
     full_pat = re.compile(r"^\s*([-+]?\d+(?:[.,]\d+)?)\s+(.+?)\s*$")
     glued_pat = re.compile(r"^\s*([-+]?\d+(?:[.,]\d+)?)([A-Za-zµμ%‰/][\w%‰/µμ]*)\s*$")
@@ -475,7 +620,7 @@ def extract_and_group_lines(
     if isDebug:
         _dbg_print("grouped_lines_after_split", grouped)
 
-    # 4.4 분리 직후 1차 단위 처리(표시만)
+    # 4.5 분리 직후 1차 단위 처리(표시만)
     # - 중복 정규화를 피하기 위해 이 단계에서는 단위를 '표시/주석'만 하고 텍스트를 변경하지 않습니다.
     # - 최종 canonical 확정은 Step 11에서 한 번만 수행합니다.
     if unit_lexicon:
@@ -495,7 +640,7 @@ def extract_and_group_lines(
             if isDebug:
                 print(f"[DEBUG] unit_first_pass_mark_error: {_e}")
 
-    # 4.5 값 경고 플래그 주석(경량) — 공백 없는 접미 H/L/N만
+    # 4.6 값 경고 플래그 주석(경량) — 공백 없는 접미 H/L/N만
     # - 원문 text는 변경하지 않음
     # - value_num(숫자 부분), value_flag(H|L|N), value_norm_stage(first_pass)를 주석으로 추가
     # - 단위 후보(_origin == split_unit_candidate)는 제외
@@ -525,7 +670,7 @@ def extract_and_group_lines(
         if isDebug:
             print(f"[DEBUG] value_flag_first_pass_error: {_e}")
 
-    # 4.6 상태 토큰 제거(NORMAL/LOW/HIGH)
+    # 4.7 상태 토큰 제거(NORMAL/LOW/HIGH)
     # - 데이터 셀로 간주되지 않는 라벨성 토큰을 조용히 제거하여 바디 라인을 정제
     try:
         statuses = {"normal", "low", "high"}
@@ -543,10 +688,10 @@ def extract_and_group_lines(
             new_grouped.append(kept)
         grouped = new_grouped
         if isDebug and removed:
-            print(f"[DEBUG] status_tokens_removed_4_6: {removed}")
+            print(f"[DEBUG] status_tokens_removed_4_7: {removed}")
     except Exception as _e:
         if isDebug:
-            print(f"[DEBUG] status_tokens_remove_error_4_6: {_e}")
+            print(f"[DEBUG] status_tokens_remove_error_4_7: {_e}")
 
     return grouped
 

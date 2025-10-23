@@ -134,6 +134,11 @@ class Settings:
 class LabTableExtractor:
     """랩 테이블에 대해 5–12단계를 오케스트레이션하는 규칙 우선 추출기.
 
+    참고(4.x 단계 재인덱싱):
+    - LinePreprocessor에 4.4 "선두 이름 병합(괄호형)" 단계가 추가되었습니다.
+    - 이에 따라 기존 4.4(값/단위 분리)→4.5, 4.5(값 플래그 주석)→4.6, 4.6(상태 토큰 제거)→4.7로 한 단계씩 뒤로 이동했습니다.
+    - 본 클래스는 5~12단계를 다루므로 동작 변경은 없으나, 주석상의 단계 번호 참조 시 위 재인덱싱을 고려하십시오.
+
     공개 진입점
     -----------
     extract_from_lines(lines, return_intermediates=False)
@@ -377,7 +382,44 @@ class LabTableExtractor:
         filled_rows: List[Dict[str, Any]] = []
         try:
             if body_lines:
-                interim_rows = self._build_interim_table(body_lines, header_roles)
+                # Header-anchored, pure-geometry interim builder returns rows and debug info
+                build_result = self._build_interim_table(body_lines, header_roles)
+                if isinstance(build_result, tuple):
+                    interim_rows, step8_dbg = build_result
+                else:
+                    interim_rows, step8_dbg = build_result, {"sample_count": None}
+
+                # 샘플 수 0개면 실패 처리: 유효하지 않은 문서로 간주하고 조기 반환
+                if isinstance(step8_dbg, dict) and step8_dbg.get("sample_count") == 0:
+                    if return_intermediates:
+                        intermediates: Intermediates = {
+                            "settings": self.settings,
+                            "body_start": body_start,
+                            "body_lines_count": len(body_lines),
+                            "body_lines": body_lines,
+                            "dropped": dropped,
+                            "debug_preview": debug_preview,
+                            "code_resolve_scan_all": code_resolve_scan_all,
+                            # step 6
+                            "header_index": header_idx,
+                            "header_line": header_line,
+                            "header_roles": header_roles,
+                            "header_source": header_source,
+                            "header_alignment": header_alignment,
+                            # step 7 meta (가능한 범위만 보존)
+                            "meta_candidates": meta_dbg.get("candidates") if isinstance(meta_dbg, dict) else None,
+                            "meta_scanned_count": meta_dbg.get("scanned_count") if isinstance(meta_dbg, dict) else None,
+                            "meta_region_end_index": meta_dbg.get("end_index") if isinstance(meta_dbg, dict) else None,
+                            # step 8 실패 정보
+                            "interim_rows": [],
+                            "filled_rows": [],
+                            "step8_debug": step8_dbg,
+                            "step8_failed": "no_band_samples",
+                            "message": "Step 8: 샘플 0개로 실패(유효하지 않은 문서)"
+                        }
+                        return doc, intermediates
+                    return doc
+
                 filled_rows = self._fill_unknowns(interim_rows, lines, body_lines, header_roles)
         except Exception:
             # 실패 시 비워둠(디버그 용이)
@@ -486,6 +528,8 @@ class LabTableExtractor:
                 # step 8 interim/filling
                 "interim_rows": interim_rows,
                 "filled_rows": filled_rows,
+                # step 8 debug (샘플/중심 등)
+                "step8_debug": locals().get("step8_dbg"),
                 # step 9 truncate to header columns
                 "step9_rows": step9_rows,
                 # step 10 split reference
@@ -2078,37 +2122,51 @@ class LabTableExtractor:
 
     def _build_interim_table(
         self, body_lines: Lines, header_roles: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """Step 8(geometry-only): 바디 라인의 x-좌표만으로 열 밴드를 추정하여 임시 행을 구성.
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Step 8(geometry-only): 헤더를 진실로 보고, 순수 기하 샘플(K개 토큰 라인)만으로 밴드를 형성.
 
-        출력 행 포맷(임시):
-          - {'_cells': List[str], '_bands': List[Tuple[int,int]]}  // bands는 공통 경계
-          - 헤더 의미론은 사용하지 않음. 후속 단계에서 역할 매핑은 표시 목적으로만 적용.
+        정책:
+        - K = max(col_index)+1 (헤더 고정)
+        - 샘플: 바디 라인 중 "기하 좌표가 있고 유효 토큰 수 == K" 인 라인들
+        - 샘플 수 0 → 실패, 1 → 그 라인 중심 신뢰, 2+ → 인덱스별 중앙값 중심
+        - 텍스트 타입 판정/추가 안전망 없음
+
+        반환:
+        - (interim_rows, dbg) 튜플
+          · interim_rows: {'_cells': List[str], '_bands': List[(L,R)], '_line_idx': int}
+          · dbg: {'K': int, 'sample_count': int, 'sample_body_indices': List[int], 'band_centers': List[int]}
         """
-        if not body_lines:
-            return []
+        from statistics import median
+        # 0) K 산정(헤더 기반)
+        K = None
+        try:
+            max_ci = -1
+            if isinstance(header_roles, dict) and header_roles:
+                for info in header_roles.values():
+                    if isinstance(info, dict) and "col_index" in info:
+                        ci = int(info.get("col_index", -1))
+                        if ci > max_ci:
+                            max_ci = ci
+            if max_ci >= 0:
+                K = max_ci + 1
+        except Exception:
+            K = None
+        if not isinstance(K, int) or K <= 0:
+            # 헤더가 없거나 비정상 — 본 전략 전제 밖. 빈 결과와 dbg 반환
+            return [], {"K": None, "sample_count": 0, "sample_body_indices": [], "band_centers": []}
 
-        # 1) 라인별 토큰(x_center, width, text) 수집 — 기하 없으면 제외
+        # 1) 토큰 추출(기하 중심)
         def _tokens_with_centers(line: Line) -> List[Tuple[int, int, str, Any]]:
             out: List[Tuple[int, int, str, Any]] = []
             if isinstance(line, (list, tuple)):
                 for t in line:
                     try:
                         if not isinstance(t, dict):
-                            txt = str(t)
-                            if txt.strip():
-                                # 기하 없으면 스킵 (geometry-first 설계)
-                                continue
                             continue
-                        xl = t.get("x_left")
-                        xr = t.get("x_right")
+                        xl = t.get("x_left"); xr = t.get("x_right")
                         if xl is None or xr is None:
                             continue
-                        try:
-                            xl_i = int(round(float(xl)))
-                            xr_i = int(round(float(xr)))
-                        except Exception:
-                            continue
+                        xl_i = int(round(float(xl))); xr_i = int(round(float(xr)))
                         if xr_i < xl_i:
                             xl_i, xr_i = xr_i, xl_i
                         c = int((xl_i + xr_i) // 2)
@@ -2121,96 +2179,79 @@ class LabTableExtractor:
                         continue
             return sorted(out, key=lambda x: x[0])
 
+        # 2) 샘플 채취: 유효 토큰 수 == K
+        sample_body_indices: List[int] = []
+        sample_centers_by_idx: List[List[int]] = [[] for _ in range(K)]
+        # 앞쪽 N개만 보되, 충분하지 않으면 더 볼 필요 없이 조건만 충족하는 라인만 채택
         sample_limit = int(getattr(self.settings, "header_alignment_preview_rows", 20)) or 20
-        samples: List[List[Tuple[int, int, str, Any]]] = []
         for i, line in enumerate(body_lines[: max(1, sample_limit)]):
             toks = _tokens_with_centers(line)
-            if toks:
-                samples.append(toks)
+            if len(toks) == K:
+                sample_body_indices.append(i)
+                # 좌→우 정렬 가정: 이미 정렬됨, 인덱스별 중심 수집
+                for j in range(K):
+                    sample_centers_by_idx[j].append(int(toks[j][0]))
 
-        if not samples:
-            return []
+        sample_count = len(sample_body_indices)
+        if sample_count == 0:
+            return [], {"K": K, "sample_count": 0, "sample_body_indices": [], "band_centers": []}
 
-        # 2) 대표 K(열 개수) 추정: 상위 샘플들의 토큰 개수 모드/중앙값 사용
-        lengths = [len(t) for t in samples if len(t) >= 2]
-        if not lengths:
-            # 토큰이 1개 이하인 라인만 있으면 밴드 계산의 의미가 약함 → 단일 컬럼으로 처리
-            # 모든 라인에 대해 단일 셀로 구성
-            rows: List[Dict[str, Any]] = []
-            for line in body_lines:
-                toks = _tokens_with_centers(line)
-                text_join = " ".join([t[2] for t in toks]) if toks else ""
-                rows.append({"_cells": [text_join], "_bands": []})
-            return rows
+        # 3) 밴드 중심 계산
+        if sample_count == 1:
+            band_centers = [sample_centers_by_idx[j][0] for j in range(K)]
+        else:
+            band_centers = [int(median(sample_centers_by_idx[j])) if sample_centers_by_idx[j] else 0 for j in range(K)]
 
-        # 간단한 모드 계산
-        from collections import Counter
-
-        cnt = Counter(lengths)
-        template_k = cnt.most_common(1)[0][0]
-
-        # 3) 참조 라인 선택: 길이가 template_k인 첫 샘플 사용
-        ref = None
-        for toks in samples:
-            if len(toks) == template_k:
-                ref = toks
-                break
-        if ref is None:
-            # 안전망: 가장 긴 샘플 사용
-            ref = max(samples, key=lambda t: len(t))
-            template_k = len(ref)
-
-        centers = [c for (c, _, _, _) in ref]
-        # 4) 밴드 경계 계산: 인접 중심의 중간값을 경계로 사용
+        # 4) 경계 계산(인접 중심 중간값, 양끝 외삽)
         edges: List[int] = []
-        if len(centers) == 1:
-            # 단일 컬럼: 넉넉한 경계 생성
-            c0 = centers[0]
+        if K == 1:
+            c0 = band_centers[0]
             edges = [c0 - 1000, c0 + 1000]
         else:
-            # 내부 경계
-            mids = [int((centers[i] + centers[i + 1]) // 2) for i in range(len(centers) - 1)]
-            # 양 끝 확장: 가장자리까지
-            first_gap = centers[1] - centers[0]
-            last_gap = centers[-1] - centers[-2]
-            left_edge = centers[0] - max(20, int(round(first_gap / 2)))
-            right_edge = centers[-1] + max(20, int(round(last_gap / 2)))
+            mids = [int((band_centers[i] + band_centers[i + 1]) // 2) for i in range(K - 1)]
+            first_gap = band_centers[1] - band_centers[0]
+            last_gap = band_centers[-1] - band_centers[-2]
+            left_edge = band_centers[0] - max(20, int(round(first_gap / 2)))
+            right_edge = band_centers[-1] + max(20, int(round(last_gap / 2)))
             edges = [left_edge] + mids + [right_edge]
 
-        bands: List[Tuple[int, int]] = []
-        for i in range(len(edges) - 1):
-            bands.append((edges[i], edges[i + 1]))
+        bands: List[Tuple[int, int]] = [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
 
-        # 5) 모든 바디 라인을 공통 밴드에 정렬하여 _cells 생성
+        # 5) 밴드 할당 함수(가장 가까운 중심)
         def _assign_to_bands(toks: List[Tuple[int, int, str, Any]], bands: List[Tuple[int, int]]) -> List[str]:
-            K = len(bands)
-            cells: List[List[str]] = [[] for _ in range(K)]
+            K2 = len(bands)
+            cells: List[List[str]] = [[] for _ in range(K2)]
+            centers_local = [int((L + R) // 2) for (L, R) in bands]
             for (c, _w, s, _tok) in toks:
-                # 우선: 내부 포함
-                assigned = False
-                for i, (L, R) in enumerate(bands):
+                # 내부 포함 우선
+                placed = False
+                for idx, (L, R) in enumerate(bands):
                     if L <= c < R:
-                        cells[i].append(s)
-                        assigned = True
+                        cells[idx].append(s)
+                        placed = True
                         break
-                if assigned:
+                if placed:
                     continue
-                # 외부 토큰: 가장 가까운 중심으로 할당
-                if K == 0:
-                    continue
-                band_centers = [int((L + R) // 2) for (L, R) in bands]
-                nearest = min(range(K), key=lambda i: abs(c - band_centers[i]))
-                cells[nearest].append(s)
-            # 셀 결합: 동일 밴드의 다중 토큰은 공백으로 연결
-            return [" ".join(items).strip() for items in cells]
+                # 외부는 최근접 중심
+                if K2 > 0:
+                    nearest = min(range(K2), key=lambda ii: abs(c - centers_local[ii]))
+                    cells[nearest].append(s)
+            return [" ".join(col).strip() for col in cells]
 
+        # 6) 전체 라인 배정
         rows: List[Dict[str, Any]] = []
         for i, line in enumerate(body_lines):
             toks = _tokens_with_centers(line)
             cells = _assign_to_bands(toks, bands)
             rows.append({"_cells": cells, "_bands": bands, "_line_idx": i})
 
-        return rows
+        dbg = {
+            "K": K,
+            "sample_count": sample_count,
+            "sample_body_indices": sample_body_indices,
+            "band_centers": band_centers,
+        }
+        return rows, dbg
 
     def _fill_unknowns(
         self,
@@ -2232,7 +2273,8 @@ class LabTableExtractor:
 
         # 역할→열 인덱스 맵(표시용)
         role_to_idx: Dict[str, int] = {}
-        if isinstance(header_roles, dict) and header_roles:
+        header_present = bool(isinstance(header_roles, dict) and header_roles)
+        if header_present:
             for role in ["name", "reference", "min", "max", "result", "unit"]:
                 try:
                     info = header_roles.get(role)
@@ -2242,7 +2284,7 @@ class LabTableExtractor:
                             role_to_idx[role] = ci
                 except Exception:
                     continue
-        # 헤더가 없으면 기본 매핑 (열 개수에 맞춰 절단)
+        # 헤더가 없을 때만 기본 매핑 사용
         default_order = ["name", "reference", "result", "unit"]
 
         for row in interim_rows:
@@ -2262,7 +2304,7 @@ class LabTableExtractor:
                 out["_line_idx"] = line_idx
             src_tokens: Dict[str, Any] = {}
 
-            if role_to_idx:
+            if header_present:
                 for role, idx in role_to_idx.items():
                     if 0 <= idx < len(cells_filled):
                         val = cells_filled[idx]
@@ -3145,9 +3187,40 @@ class LabTableExtractor:
             if not isinstance(intermediates, dict):
                 return f"⚠️ intermediates 타입 이상: {type(intermediates)}"
 
+            # 샘플 요약(먼저 표시)
+            out: List[str] = []
+            try:
+                step8_dbg = intermediates.get("step8_debug") or {}
+                body_lines = intermediates.get("body_lines") or []
+                sample_idx_list = step8_dbg.get("sample_body_indices") or []
+                K = step8_dbg.get("K")
+                sc = step8_dbg.get("sample_count")
+                out.append("📌 Step 8 샘플(geometry 기반)")
+                out.append(f" - K={K} | sample_count={sc}")
+                if sample_idx_list:
+                    out.append(" - 샘플 라인:")
+                    for bi in sample_idx_list:
+                        try:
+                            # 원본 라인 인덱스 추출 시도
+                            orig_idx = None
+                            line = body_lines[bi] if 0 <= int(bi) < len(body_lines) else None
+                            if isinstance(line, (list, tuple)) and len(line) > 0 and isinstance(line[0], dict):
+                                orig_idx = line[0].get("line_index")
+                            preview = self._line_join_texts(line) if line is not None else ""
+                            prefix = f"   - line#{orig_idx}" if orig_idx is not None else "   - line#?"
+                            out.append(f"{prefix}: {preview}")
+                        except Exception:
+                            out.append("   - <표시 실패>")
+                else:
+                    out.append(" - (샘플 없음)")
+            except Exception:
+                # 샘플 요약 실패 시 무시하고 계속
+                pass
+
             filled = intermediates.get("filled_rows") or []
             if not filled:
-                return "ℹ️ filled_rows 비어있음 (Step 8 미실행 또는 헤더 스코프 불일치)"
+                out.append("\nℹ️ filled_rows 비어있음 (Step 8 미실행 또는 헤더 스코프 불일치)")
+                return "\n".join(out)
 
             # 1) 헤더/역할 구성: 실제 헤더 순서를 따르는 동적 컬럼 구성
             header_roles = intermediates.get("header_roles") or {}
@@ -3259,7 +3332,7 @@ class LabTableExtractor:
                 return "-+-".join(parts)
 
             # 4) 테이블 렌더링
-            out: List[str] = []
+            out.append("")
             out.append("🧩 Step 8: Filling 결과 (정렬된 표, 전체)")
             out.append(_fmt_cells(labels))
             out.append(_sep_line())

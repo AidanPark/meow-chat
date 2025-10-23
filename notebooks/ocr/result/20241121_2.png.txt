@@ -1,20 +1,19 @@
 === Output for 20241121_2.png ===
 Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20241121_2.png
-Generated on: 2025-10-23 04:30:55.867589 (Processing time: 00:13.53)
+Generated on: 2025-10-23 16:46:35.373816 (Processing time: 00:16.57)
 
 🧾 Step 12: 포함/제외 tests 전체 (라인 순)
-code       |   value | value_conf | unit    | reference_min | reference_max | drop_reason  
------------+---------+------------+---------+---------------+---------------+--------------
-MCH        |    11.8 |     0.9972 | pg      |          12.0 |          16.0 |              
-MCHC       |    25.3 |     0.9665 | g/dL    |          27.0 |          32.8 |              
-PLT        |    73.0 |     0.9055 | K/µL    |         157.0 |         627.0 |              
-MPV        |    10.0 |     0.9578 | fL      |           8.6 |          18.9 |              
-PCT        |    0.07 |     0.9963 | %       |           0.0 |           2.9 |              
-PDW        |     9.7 |     0.9983 | %       |       UNKNOWN |       UNKNOWN |              
-RDW-SD     |    26.0 |     0.9744 | fL      |           0.1 |          99.9 |              
-RDW-CV     |    15.0 |     0.9942 | %       |          14.4 |          19.4 |              
-FSAA       | UNKNOWN |     1.0000 | UNKNOWN |       UNKNOWN |       UNKNOWN | unknown_value
-SAA-Vcheck | UNKNOWN |     1.0000 | µg/mL   |           0.0 |           5.0 | unknown_value
+code       |   value | value_conf | unit  | reference_min | reference_max | drop_reason  
+-----------+---------+------------+-------+---------------+---------------+--------------
+MCH        |    11.8 |     0.9901 | pg    |          12.0 |          16.0 |              
+MCHC       |    25.3 |     0.9571 | g/dL  |          27.0 |          32.8 |              
+PLT        |    73.0 |     0.9360 | K/µL  |         157.0 |         627.0 |              
+MPV        |    10.0 |     0.9566 | fL    |           8.6 |          18.9 |              
+PCT        |    0.07 |     0.9938 | %     |           0.0 |           2.9 |              
+PDW        |     9.7 |     0.9990 | %     |       UNKNOWN |       UNKNOWN |              
+RDW-SD     |    26.0 |     0.9821 | fL    |           0.1 |          99.9 |              
+RDW-CV     |    15.0 |     0.9782 | %     |          14.4 |          19.4 |              
+SAA-Vcheck | UNKNOWN |     1.0000 | µg/mL |           0.0 |           5.0 | unknown_value
 
 🏥 hospital_name: (None)
 👤 client_name  : (None)
@@ -34,11 +33,11 @@ RDW-SD |  26.0 | fL   |           0.1 |          99.9
 RDW-CV |  15.0 | %    |          14.4 |          19.4
 
 📊 QA 요약:
- - rows: 10
+ - rows: 9
  - truncated_rows: 0
- - unit_canonical_coverage: (9, 10)
- - result_norm_coverage: (8, 10)
- - step12_removed_unknown: 2
+ - unit_canonical_coverage: (9, 9)
+ - result_norm_coverage: (8, 9)
+ - step12_removed_unknown: 1
  - step12_removed_low_conf: 0
  - step12_dedup_removed: 0
  - step12_conf_threshold: 0.94

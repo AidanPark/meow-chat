@@ -1048,12 +1048,36 @@ def save_png_bytes(img: Image.Image, compress_level: int = 6) -> bytes:
     return buf.getvalue()
 
 
-def apply_pipeline(img: Image.Image, steps: Sequence[tuple[Callable, dict]]) -> Image.Image:
+def apply_pipeline(img: Image.Image, steps: Sequence[tuple[Callable, dict]], debug: bool = False) -> Image.Image:
     """
     체이닝 실행 유틸. [(func, kwargs), ...] 형태로 전달된 스텝을 순서대로 적용.
+    debug=True일 때 각 스텝 이름/파라미터와 사이즈/모드 변화를 로그로 출력.
     """
+    if debug and not steps:
+        print("[pipeline] no-op (no steps configured)")
+
     for func, kwargs in steps:
-        img = func(img, **kwargs)
+        name = getattr(func, "__name__", str(func))
+        before_size = getattr(img, "size", None)
+        before_mode = getattr(img, "mode", None)
+
+        if debug:
+            # 노이즈가 큰 debug 파라미터는 생략하고 핵심만 표시
+            shown_kwargs = {k: v for k, v in (kwargs or {}).items() if k != "debug" and v is not None}
+            if shown_kwargs:
+                kv = ", ".join(f"{k}={v}" for k, v in shown_kwargs.items())
+            else:
+                kv = ""
+            print(f"[pipeline] -> {name}({kv})")
+
+        img2 = func(img, **(kwargs or {}))
+
+        after_size = getattr(img2, "size", before_size)
+        after_mode = getattr(img2, "mode", before_mode)
+        if debug:
+            print(f"[pipeline]    size {before_size} → {after_size}, mode {before_mode} → {after_mode}")
+
+        img = img2
     return img
 
 
@@ -1077,6 +1101,7 @@ class Settings:
 
     기타:
     - target_long_edge: 최종 다운스케일 목표 롱엣지. 0이면 다운스케일 미적용
+    - white_border_px: 최종 단계에서 추가할 흰색 테두리 두께(px). 0이면 추가하지 않음
     - debug: 디버그 로그 출력
     """
     jpeg_quality: int = 0
@@ -1092,6 +1117,7 @@ class Settings:
     enable_table_enhance: bool = False
     enable_sharpen: bool = False
     target_long_edge: int = 0
+    white_border_px: int = 0
     debug: bool = False
 
 
@@ -1108,7 +1134,7 @@ class ImagePreprocessor:
         """파이프라인 단계 목록을 구성."""
         S = self.settings
         steps: List[Tuple[Callable, dict]] = []
-        # 0) 기본 정리(옵션)
+        # 0) 기본 정리
         if S.enable_flatten_transparency:
             steps.append((flatten_transparency, {}))
         if S.enable_normalize_mode:
@@ -1118,7 +1144,7 @@ class ImagePreprocessor:
         if S.long_edge_min and S.long_edge_min > 0:
             steps.append((upscale_min_resolution, {"min_long_edge": S.long_edge_min}))
 
-        # 2) 조명/대비(옵션)
+        # 2) 조명/대비
         if S.enable_glare_suppression:
             steps.append((suppress_glare, {"debug": S.debug}))
         if S.enable_weak_autocontrast:
@@ -1127,7 +1153,7 @@ class ImagePreprocessor:
             steps.append((blacken_reddish_text, {"debug": S.debug}))
             steps.append((blacken_bluish_text, {"debug": S.debug}))
 
-        # 3) 모드 변환(옵션)
+        # 3) 모드 변환
         if S.enable_to_grayscale:
             steps.append((to_grayscale, {}))
 
@@ -1137,7 +1163,7 @@ class ImagePreprocessor:
         if S.enable_deskew:
             steps.append((deskew_textlines, {"debug": S.debug}))
 
-        # 5) 표 라인 강화(옵션)
+        # 5) 표 라인 강화
         if S.enable_table_enhance:
             steps.append((enhance_table_lines, {"debug": S.debug}))
 
@@ -1145,9 +1171,14 @@ class ImagePreprocessor:
         if S.target_long_edge and S.target_long_edge > 0:
             steps.append((downscale_target_long_edge, {"target_long_edge": S.target_long_edge}))
 
-        # 7) 마지막 선명도(옵션)
+        # 7) 선명도 강화
         if S.enable_sharpen:
             steps.append((conservative_sharpen, {}))
+
+        # 8) 최종 얇은 흰색 테두리(옵션) — 가장 마지막에 적용
+        #    white_border_px가 0이면 적용하지 않음
+        if isinstance(S.white_border_px, int) and S.white_border_px > 0:
+            steps.append((add_white_border, {"border": int(S.white_border_px)}))
         return steps
 
     def process_bytes(self, img_bytes: bytes, debug: Optional[bool] = None) -> bytes:
@@ -1158,20 +1189,28 @@ class ImagePreprocessor:
         try:
             if dbg:
                 print("🏥 이미지 전처리 시작 (ImagePreprocessor)")
+            print("🔁 EXIF 회전 교정 적용 시도") if dbg else None
             img = open_with_exif(img_bytes)
             original_size = img.size
             if dbg:
                 print(f"📏 원본 이미지 크기: {original_size}")
 
             steps = self.build_steps()
-            img = apply_pipeline(img, steps)
+            if dbg:
+                step_names = [getattr(f, "__name__", str(f)) for f, _ in steps]
+                print(f"🧰 실행 단계: {len(steps)} → {', '.join(step_names) if step_names else '(none)'}")
+            img = apply_pipeline(img, steps, debug=dbg)
 
             buf = io.BytesIO()
             # jpeg_quality>0 이면 JPEG 저장, 0이면 PNG 저장
             if isinstance(self.settings.jpeg_quality, int) and self.settings.jpeg_quality > 0:
                 img = img.convert("L" if img.mode == "L" else "RGB")
+                if dbg:
+                    print(f"💾 저장 형식: JPEG(quality={int(self.settings.jpeg_quality)})")
                 img.save(buf, format="JPEG", quality=int(self.settings.jpeg_quality), optimize=True)
             else:
+                if dbg:
+                    print("💾 저장 형식: PNG(optimize=True)")
                 img.save(buf, format="PNG", optimize=True)
             out = buf.getvalue()
 

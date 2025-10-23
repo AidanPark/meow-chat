@@ -1,0 +1,141 @@
+=== Output for 20241121.png ===
+Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20241121.png
+Generated on: 2025-10-24 01:40:01.607812 (Processing time: 00:15.55)
+
+🧾 Step 12: 포함/제외 tests 전체 (라인 순)
+code             |   value | value_conf | unit    | reference_min | reference_max | drop_reason  
+-----------------+---------+------------+---------+---------------+---------------+--------------
+T.Protein        |     6.1 |     0.9995 | g/dL    |           5.7 |           7.8 |              
+Albumin          |     2.9 |     0.9982 | g/dL    |           2.3 |           3.5 |              
+Globulin         |     3.2 |     0.9988 | g/dL    |           2.7 |           5.2 |              
+BUN              | UNKNOWN |     1.0000 | mg/dL   |          17.6 |          32.8 | unknown_value
+IP               | UNKNOWN |     1.0000 | mg/dL   |           2.6 |           6.0 | unknown_value
+ALP              | UNKNOWN |     1.0000 | U/L     |          77.0 |         358.0 | unknown_value
+GGT              | UNKNOWN |     1.0000 | U/L     |           1.0 |          10.0 | unknown_value
+Triglyceride(TG) | UNKNOWN |     1.0000 | mg/dL   |          17.0 |         104.0 | unknown_value
+Ca               | UNKNOWN |     1.0000 | mg/dL   |           8.8 |          11.9 | unknown_value
+Mg               | UNKNOWN |     1.0000 | mg/dL   |           1.8 |           2.7 | unknown_value
+CK               | UNKNOWN |     1.0000 | U/L     |          87.0 |         309.0 | unknown_value
+NH3              | UNKNOWN |     1.0000 | mg/dL   |          23.0 |          78.0 | unknown_value
+CRP              | UNKNOWN |     1.0000 | mg/dL   |       UNKNOWN |       UNKNOWN | unknown_value
+SAA-Vcheck       | UNKNOWN |     1.0000 | <5ug/mL |           0.0 |           5.0 | unknown_value
+Na/K             | UNKNOWN |     1.0000 | UNKNOWN |          33.6 |          44.2 | unknown_value
+ALB/GLOB         |     0.9 |     0.9993 | UNKNOWN |           0.6 |           1.1 |              
+BUN/CRE          | UNKNOWN |     1.0000 | UNKNOWN |          17.5 |          21.9 | unknown_value
+WBC              |    17.3 |     0.9981 | K/µL    |           6.3 |          19.6 |              
+LYMPH            |     9.2 |     0.9992 | K/µL    |           2.0 |           7.2 |              
+EOS              | UNKNOWN |     1.0000 | K/µL    |           0.3 |           1.7 | unknown_value
+LYMPH            |    53.2 |     0.9970 | %       |          20.0 |          61.2 |              
+EOS              | UNKNOWN |     1.0000 | %       |       UNKNOWN |       UNKNOWN | unknown_value
+RBC              |    3.28 |     0.9805 | M/µL    |           6.0 |          10.1 |              
+HGB              |     3.9 |     0.9711 | g/dL    |           8.1 |          14.2 |              
+HCT              |    15.4 |     0.9753 | %       |          27.7 |          46.8 |              
+
+🏥 hospital_name: (None)
+👤 client_name  : (None)
+🐾 patient_name : (None)
+🗓  inspection_date: 2024-11-21
+
+🧾 Step 13: 최종 JSON
+code      | value | unit    | reference_min | reference_max
+----------+-------+---------+---------------+--------------
+T.Protein |   6.1 | g/dL    |           5.7 |           7.8
+Albumin   |   2.9 | g/dL    |           2.3 |           3.5
+Globulin  |   3.2 | g/dL    |           2.7 |           5.2
+ALB/GLOB  |   0.9 | UNKNOWN |           0.6 |           1.1
+WBC       |  17.3 | K/µL    |           6.3 |          19.6
+LYMPH     |   9.2 | K/µL    |           2.0 |           7.2
+LYMPH     |  53.2 | %       |          20.0 |          61.2
+RBC       |  3.28 | M/µL    |           6.0 |          10.1
+HGB       |   3.9 | g/dL    |           8.1 |          14.2
+HCT       |  15.4 | %       |          27.7 |          46.8
+
+📊 QA 요약:
+ - rows: 25
+ - truncated_rows: 0
+ - unit_canonical_coverage: (22, 25)
+ - result_norm_coverage: (10, 25)
+ - step12_removed_unknown: 15
+ - step12_removed_low_conf: 0
+ - step12_dedup_removed: 0
+ - step12_conf_threshold: 0.94
+
+🧾 Final JSON:
+{
+  "hospital_name": null,
+  "client_name": null,
+  "patient_name": null,
+  "inspection_date": "2024-11-21",
+  "tests": [
+    {
+      "code": "T.Protein",
+      "unit": "g/dL",
+      "reference_min": 5.7,
+      "reference_max": 7.8,
+      "value": 6.1
+    },
+    {
+      "code": "Albumin",
+      "unit": "g/dL",
+      "reference_min": 2.3,
+      "reference_max": 3.5,
+      "value": 2.9
+    },
+    {
+      "code": "Globulin",
+      "unit": "g/dL",
+      "reference_min": 2.7,
+      "reference_max": 5.2,
+      "value": 3.2
+    },
+    {
+      "code": "ALB/GLOB",
+      "unit": "UNKNOWN",
+      "reference_min": 0.6,
+      "reference_max": 1.1,
+      "value": 0.9
+    },
+    {
+      "code": "WBC",
+      "unit": "K/µL",
+      "reference_min": 6.3,
+      "reference_max": 19.6,
+      "value": 17.3
+    },
+    {
+      "code": "LYMPH",
+      "unit": "K/µL",
+      "reference_min": 2.0,
+      "reference_max": 7.2,
+      "value": 9.2
+    },
+    {
+      "code": "LYMPH",
+      "unit": "%",
+      "reference_min": 20.0,
+      "reference_max": 61.2,
+      "value": 53.2
+    },
+    {
+      "code": "RBC",
+      "unit": "M/µL",
+      "reference_min": 6.0,
+      "reference_max": 10.1,
+      "value": 3.28
+    },
+    {
+      "code": "HGB",
+      "unit": "g/dL",
+      "reference_min": 8.1,
+      "reference_max": 14.2,
+      "value": 3.9
+    },
+    {
+      "code": "HCT",
+      "unit": "%",
+      "reference_min": 27.7,
+      "reference_max": 46.8,
+      "value": 15.4
+    }
+  ]
+}
