@@ -541,9 +541,16 @@ def extract_and_group_lines(
         pass
 
     # 4.5 값/단위 분리
-    # 공백 기반 분리 + 공백 없는 붙어있는 형태도 분리(예: 1.9mg/dL, 7.34%)
-    full_pat = re.compile(r"^\s*([-+]?\d+(?:[.,]\d+)?)\s+(.+?)\s*$")
-    glued_pat = re.compile(r"^\s*([-+]?\d+(?:[.,]\d+)?)([A-Za-zµμ%‰/][\w%‰/µμ]*)\s*$")
+    # 공백 기반 분리 + 공백 없는 붙어있는 형태도 분리(예: <5ug/mL, 1.9mg/dL, 7.34%)
+    # - 비교기( <, >, <=, >=, ≤, ≥, ~, ≈ )를 숫자 앞에서 허용
+    _comp = r"(?:[<>]=?|[≤≥≈~])?"  # 선택적 비교기
+    _num  = r"[-+]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:\s*(?:x|×)\s*10\s*\^?\s*[-+]?\d+)?"  # 숫자 + (선택)지수형
+    _unit = r"[A-Za-zµμ%‰/][\w%‰/µμ]*"  # 단위 토큰 시작은 문자/기호, 이어서 단위 구성 가능 문자
+
+    # 공백 분리형: (<) 5  +  단위
+    full_pat  = re.compile(rf"^\s*({_comp})\s*({_num})\s+(.+?)\s*$")
+    # 붙어있는형: (<)5 + 단위
+    glued_pat = re.compile(rf"^\s*({_comp})\s*({_num})({_unit})\s*$")
     range_seps = ("-", "–", "~")
 
     def _to_int_or_none(v):
@@ -563,17 +570,22 @@ def extract_and_group_lines(
             m = None
             value_str = None
             unit_str = None
-            # 먼저 공백 기반 분리 시도
+            # 먼저 공백 기반 분리 시도 (비교기 포함)
             m = full_pat.match(text)
             if m:
-                value_str = m.group(1).strip()
-                unit_str = m.group(2).strip()
+                comp = (m.group(1) or "").strip()
+                num  = (m.group(2) or "").strip()
+                value_str = f"{comp}{num}" if comp else num
+                unit_str = m.group(3).strip()
             else:
-                # 공백 없는 붙은 형태도 시도: 숫자 + 단위토큰
+                # 공백 없는 붙은 형태도 시도: (비교기 포함) 숫자 + 단위토큰
                 mg = glued_pat.match(text)
                 if mg:
-                    value_str = mg.group(1).strip()
-                    unit_str = mg.group(2).strip()
+                    comp = (mg.group(1) or "").strip()
+                    num  = (mg.group(2) or "").strip()
+                    unit = (mg.group(3) or "").strip()
+                    value_str = f"{comp}{num}" if comp else num
+                    unit_str = unit
             if value_str is None or unit_str is None:
                 out.append(tok)
                 continue

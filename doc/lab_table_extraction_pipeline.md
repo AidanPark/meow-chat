@@ -128,6 +128,12 @@
 
 디버그: `debug_step6(...)` 헤더 라인, 역할 매핑, source, 정책 유효 여부 출력
 
+### 헤더 역할 구조 표준화(Header Roles Contract)
+
+- intermediates['header_roles']는 표준화된 리스트 형태로 유지됩니다: `[{ role, col_index, label?, confidence?, hits?, meets_threshold?, forced? }]`.
+- 소비 시에는 내부 헬퍼로 roles mapping을 생성해 사용합니다: `role → { col_index, ... }`.
+- 열 개수 K는 헤더 역할 개수에서 파생됩니다(헤더 존재 시). 이후 단계(특히 Step 8/9)는 이 K를 진실로 사용합니다.
+
 
 ## Step 7. 상단 메타데이터 추출
 
@@ -141,16 +147,19 @@
 디버그: `debug_step7(intermediates, show_top_k=K)` 후보 상위 K와 최종 선택 출력
 
 
-## Step 8. 테이블 Filling (UNKNOWN 채우기)
+## Step 8. 테이블 Filling (헤더-앵커, 기하 기반)
 
-목적: 규칙 기반으로 안전하게 누락 칸을 메워 “행 단위 테이블”을 안정화합니다.
+목적: 헤더를 단일 진실로 삼아 열 수(K)와 밴드 중심을 순수 기하(geometry)로 결정하고, 누락 칸을 안정적으로 채웁니다.
 
-- Interim 행 구성: name/reference/result/unit 4열 우선, 원본 토큰과 라인을 `_src_tokens`, `_src_line`에 보존
-- 타입 검증 후 보정: Result 숫자형만, Reference 범위 패턴만 유효
-- 기하 기반 보정(빈 칸일 때만): 숫자형/유닛 후보 스캔 → x_center 근접 기준으로 채움
-- 최종적으로 채우지 못한 칸은 문자열 "UNKNOWN"으로 표기
+- K 산정: 표준화된 header_roles에서 파생(K = len(roles)).
+- 샘플 선정: 본문 라인 중 토큰 수가 정확히 K인 라인만 샘플로 사용.
+	- 샘플 0개 → 실패 처리(이전 단계 재검토 필요)
+	- 샘플 1개 → 해당 라인의 중심을 신뢰
+	- 샘플 2개 이상 → 중심의 중앙값(메디안) 사용
+- 채우기: 빈 칸일 때만, 해당 밴드에 가장 가까운 후보(결과/단위 등)를 채움. 원본 토큰은 `_src_tokens`에 보존.
+- 헤더 존재 시, 과거의 기본(열 순서) fallback은 제거되었습니다.
 
-디버그: `debug_step8(intermediates)` 정렬된 행 프리뷰 출력
+디버그: `debug_step8(intermediates)`가 샘플 요약을 먼저 출력한 다음, 실제 헤더 순서로 정렬된 전체 테이블을 렌더링합니다.
 
 
 ## Step 9. 행 길이 정규화(뒤에서 자르기)
@@ -192,7 +201,7 @@
 - Confidence gate(휴리스틱)로 낮은 신뢰도 제거 → reason=low_confidence
 - 동일 코드 중복은 마지막만 보존 → reason=duplicated_code_kept_last
 
-디버그: `debug_step12(intermediates)` → 제외된 tests만 표로 출력(code | unit | reference_min | reference_max | value | value_conf | reason)
+디버그: `debug_step12(intermediates)` → 라인 순으로 전체 tests를 표로 출력(code | value | value_conf | unit | reference_min | reference_max | drop_reason). 포함된 항목은 drop_reason이 비어 있습니다.
 
 
 ## Step 13. 최종 JSON 및 QA 요약

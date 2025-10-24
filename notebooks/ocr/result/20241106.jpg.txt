@@ -1,48 +1,49 @@
 === Output for 20241106.jpg ===
 Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20241106.jpg
-Generated on: 2025-10-23 02:42:10.154552 (Processing time: 00:15.35)
+Generated on: 2025-10-24 23:39:16 (Processing time: 00:05.22)
 
 🧾 Step 12: 포함/제외 tests 전체 (라인 순)
-code         |   value |         value_conf | unit      | reference_min | reference_max | drop_reason              
--------------+---------+--------------------+-----------+---------------+---------------+--------------------------
-RBC          |    1.48 | 0.9861356019973755 | M/µL      |          6.54 |          12.2 | duplicated_code_kept_last
-HCT          |     6.9 | 0.9892417788505554 | %         |          30.3 |          52.3 | duplicated_code_kept_last
-HGB          |     1.7 | 0.8946354389190674 | g/dL      |           9.8 |          16.2 | duplicated_code_kept_last
-MCV          |    47.2 | 0.9990883469581604 | fL        |          35.9 |          53.1 | duplicated_code_kept_last
-MCH          |    11.4 | 0.9975888729095459 | pg        |          11.8 |          17.3 | duplicated_code_kept_last
-MCHC         |    24.6 | 0.9732333421707153 | g/dL      |          28.1 |          35.8 | duplicated_code_kept_last
-RDW          | UNKNOWN |                1.0 | %         |          15.0 |          27.0 | unknown_value            
-RETIC        | UNKNOWN |                1.0 | K/µL      |           3.0 |          50.0 | unknown_value            
-WBC          |    12.8 |   0.97149658203125 | K/µL      |          2.87 |         17.02 | duplicated_code_kept_last
-NEUTROPHILS  | UNKNOWN |                1.0 | %         |       UNKNOWN |       UNKNOWN | unknown_value            
-LYMPHO       | UNKNOWN |                1.0 | %         |       UNKNOWN |       UNKNOWN | unknown_value            
-MONO         | UNKNOWN |                1.0 | %         |       UNKNOWN |       UNKNOWN | unknown_value            
-EOS          | UNKNOWN |                1.0 | %         |       UNKNOWN |       UNKNOWN | unknown_value            
-BASO         | UNKNOWN |                1.0 | %         |       UNKNOWN |       UNKNOWN | unknown_value            
-NEUT         |     7.6 | 0.9637368321418762 | K/µL      |          1.15 |         10.29 |                          
-LYMPH        |     4.2 | 0.9135362505912781 | K/µL      |          0.92 |          6.88 |                          
-MONO         | UNKNOWN |                1.0 | K/µL      |          0.05 |          0.67 | unknown_value            
-EOS          | UNKNOWN |                1.0 | K/µL      |          0.17 |          1.57 | unknown_value            
-BASO         | UNKNOWN |                1.0 | K/µL      |          0.01 |          0.26 | unknown_value            
-PLT          |    24.0 | 0.9003945589065552 | K/µL      |         151.0 |         600.0 |                          
-MPV          |     7.5 | 0.9996693134307861 | fL        |       UNKNOWN |       UNKNOWN |                          
-PDW          |     8.4 |  0.999260425567627 | fL        |       UNKNOWN |       UNKNOWN |                          
-PCT          | UNKNOWN |                1.0 | %         |       UNKNOWN |       UNKNOWN | unknown_value            
-RETHGB       | UNKNOWN |                1.0 | pg        |          13.2 |          20.8 | unknown_value            
-Heartworm Ag | UNKNOWN |                1.0 | neg pos/n |       UNKNOWN |       UNKNOWN | unknown_value            
-FeLV         | UNKNOWN |                1.0 | neg pos/n |       UNKNOWN |       UNKNOWN | unknown_value            
-FIV          | UNKNOWN |                1.0 | neg pos/n |       UNKNOWN |       UNKNOWN | unknown_value            
-RBC          |     1.7 | 0.9903662204742432 | M/µL      |          6.54 |          12.2 |                          
-HCT          |     8.0 | 0.9350705742835999 | %         |          30.3 |          52.3 |                          
-HGB          |     2.2 | 0.9425427913665771 | g/dL      |           9.8 |          16.2 |                          
-MCV          |    47.1 | 0.9993114471435547 | fL        |          35.9 |          53.1 |                          
-MCH          |    12.9 | 0.9990131855010986 | pg        |          11.8 |          17.3 |                          
-MCHC         |    27.5 | 0.9985020160675049 | g/dL      |          28.1 |          35.8 |                          
-RDW          |    27.8 |  0.999244213104248 | %         |          15.0 |          27.0 |                          
-RETIC        |    15.3 | 0.9265647530555725 | K/µL      |           3.0 |          50.0 |                          
-WBC          |   15.29 | 0.9147605895996094 | K/µL      |          2.87 |         17.02 |                          
-NEUTROPHILS  |    66.9 | 0.9990520477294922 | %         |       UNKNOWN |       UNKNOWN |                          
+code         |   value | value_conf | unit    | reference_min | reference_max | drop_reason              
+-------------+---------+------------+---------+---------------+---------------+--------------------------
+RBC          |    1.48 |     0.9908 | M/µL    |          6.54 |          12.2 | duplicated_code_kept_last
+HCT          |     6.9 |     0.9979 | %       |          30.3 |          52.3 | duplicated_code_kept_last
+HGB          |     1.7 |     0.8949 | g/dL    |           9.8 |          16.2 | duplicated_code_kept_last
+MCV          |    47.2 |     0.9992 | fL      |          35.9 |          53.1 | duplicated_code_kept_last
+MCH          |    11.4 |     0.9981 | pg      |          11.8 |          17.3 | duplicated_code_kept_last
+MCHC         |    24.6 |     0.9982 | g/dL    |          28.1 |          35.8 | duplicated_code_kept_last
+RDW          | UNKNOWN |     0.9970 | %       |          15.0 |          27.0 | unknown_value            
+RETIC        | UNKNOWN |     0.9970 | K/µL    |           3.0 |          50.0 | unknown_value            
+WBC          |    12.8 |     0.9660 | K/µL    |          2.87 |         17.02 | duplicated_code_kept_last
+NEUTROPHILS  | UNKNOWN |     0.9970 | %       |       UNKNOWN |       UNKNOWN | unknown_value            
+LYMPHO       | UNKNOWN |     0.9970 | %       |       UNKNOWN |       UNKNOWN | unknown_value            
+MONO         | UNKNOWN |     0.9970 | %       |       UNKNOWN |       UNKNOWN | unknown_value            
+EOS          | UNKNOWN |     0.9970 | %       |       UNKNOWN |       UNKNOWN | unknown_value            
+BASO         | UNKNOWN |     0.9970 | %       |       UNKNOWN |       UNKNOWN | unknown_value            
+NEUT         |     7.6 |     0.8935 | K/µL    |          1.15 |         10.29 |                          
+LYMPH        |     4.2 |     0.9084 | K/µL    |          0.92 |          6.88 |                          
+MONO         | UNKNOWN |     0.9970 | K/µL    |          0.05 |          0.67 | unknown_value            
+EOS          | UNKNOWN |     0.9970 | K/µL    |          0.17 |          1.57 | unknown_value            
+BASO         | UNKNOWN |     0.9970 | K/µL    |          0.01 |          0.26 | unknown_value            
+PLT          |    24.0 |     0.9508 | K/µL    |         151.0 |         600.0 |                          
+MPV          |     7.5 |     0.9995 | fL      |       UNKNOWN |       UNKNOWN |                          
+PDW          |     8.4 |     0.9995 | fL      |       UNKNOWN |       UNKNOWN |                          
+PCT          | UNKNOWN |     0.9970 | %       |       UNKNOWN |       UNKNOWN | unknown_value            
+RETHGB       | UNKNOWN |     0.9970 | pg      |          13.2 |          20.8 | unknown_value            
+Heartworm Ag | UNKNOWN |     0.9970 | UNKNOWN |       UNKNOWN |       UNKNOWN | unknown_value            
+FeLV         | UNKNOWN |     0.9970 | UNKNOWN |       UNKNOWN |       UNKNOWN | unknown_value            
+FIV          | UNKNOWN |     0.9970 | UNKNOWN |       UNKNOWN |       UNKNOWN | unknown_value            
+RBC          |     1.7 |     0.9608 | M/µL    |          6.54 |          12.2 |                          
+HCT          |     8.0 |     0.9568 | %       |          30.3 |          52.3 |                          
+HGB          |     2.2 |     0.9831 | g/dL    |           9.8 |          16.2 |                          
+MCV          |    47.1 |     0.9990 | fL      |          35.9 |          53.1 |                          
+MCH          |    12.9 |     0.9989 | pg      |          11.8 |          17.3 |                          
+MCHC         |    27.5 |     0.9989 | g/dL    |          28.1 |          35.8 |                          
+RDW          |    27.8 |     0.9987 | %       |          15.0 |          27.0 |                          
+RETIC        |    15.3 |     0.9669 | K/µL    |           3.0 |          50.0 |                          
+WBC          |   15.29 |     0.9765 | K/µL    |          2.87 |         17.02 |                          
+NEUTROPHILS  |    66.9 |     0.9991 | %       |       UNKNOWN |       UNKNOWN |
 
+🧾 Step 13: 최종 테이블
 🏥 hospital_name: (None)
 👤 client_name  : 하선경
 🐾 patient_name : 양희
@@ -70,7 +71,7 @@ NEUTROPHILS |  66.9 | %    |       UNKNOWN |       UNKNOWN
 📊 QA 요약:
  - rows: 37
  - truncated_rows: 0
- - unit_canonical_coverage: (37, 37)
+ - unit_canonical_coverage: (34, 37)
  - result_norm_coverage: (22, 37)
  - step12_removed_unknown: 15
  - step12_removed_low_conf: 0

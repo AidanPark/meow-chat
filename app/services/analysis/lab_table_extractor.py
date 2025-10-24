@@ -23,10 +23,15 @@ from functools import lru_cache
 
 try:
     # 검사코드 사전 모듈은 아래 헬퍼들을 제공합니다.
-    from .reference.code_lexicon import get_code_lexicon, resolve_code
+    from .reference.code_lexicon import get_code_lexicon
 except Exception:  # pragma: no cover - allow import even before module is present in some envs
     get_code_lexicon = None  # type: ignore
-    resolve_code = None  # type: ignore
+
+# 코드 정규화/해석 모듈 (unit_normalizer와 동일한 분리 스타일)
+try:
+    from .code_normalizer import resolve_code_with_fallback as _resolve_code_norm
+except Exception:  # pragma: no cover
+    _resolve_code_norm = None  # type: ignore
 
 # 단일 정규화 모듈 사용 (파편화 해결)
 try:
@@ -70,6 +75,13 @@ class Settings:
     fallback_result_min_ratio: float = 0.45
     prefer_result_left_of_unit_bonus: float = 0.05
     fallback_consider_neighbors: int = 1
+
+    # 밴드 배정 전략
+    # - band_assignment_mode: "hybrid"(기본) | "include" | "nearest"
+    #   * hybrid   : 밴드 내부 포함(L <= xc < R) 우선, 미포함 토큰은 최근접 중심으로 배정
+    #   * include  : 밴드 내부 포함 방식만 사용(폴백 없음)
+    #   * nearest  : 항상 최근접 중심(샘플 열 x-중앙값)으로만 배정, 밴드 포함 여부는 무시
+    band_assignment_mode: str = "nearest"
 
     # 헤더-바디 일치율 게이트 설정 (OCR 헤더 신뢰성 검사)
     header_alignment_overall_threshold: float = 0.65
@@ -198,7 +210,6 @@ class LabTableExtractor:
         반환값
         ------
         DocumentResult 또는 (DocumentResult, Intermediates)
-            현재 단계에서는 초기화된 컨테이너와 5단계 결과 요약만 제공
         """
         doc = self._init_doc_result()
 
@@ -251,7 +262,7 @@ class LabTableExtractor:
         # - 유효성: 서로 다른 역할(role)의 적중 수가 role_min_distinct_hits 이상
         # -----------------------
         header_idx: Optional[int] = None
-        header_roles: Dict[str, Any] = {}
+        header_roles: Any = {}
         header_line: Optional[Line] = None
         header_source: str = "none"  # 'ocr' | 'inferred' | 'llm' | 'none'
 
@@ -269,7 +280,12 @@ class LabTableExtractor:
         ocr_header_valid = False
         try:
             if header_roles:
-                distinct_ocr = len([r for r in header_roles.keys() if header_roles.get(r)])
+                # dict 기반 가정 제거: 임시로 dict로 온 경우 대비
+                if isinstance(header_roles, dict):
+                    distinct_ocr = len([r for r in header_roles.keys() if header_roles.get(r)])
+                else:
+                    # 표준화 전이므로 보수적으로 True/False만 산정
+                    distinct_ocr = 1
                 ocr_header_valid = distinct_ocr >= int(self.settings.role_min_distinct_hits)
         except Exception:
             ocr_header_valid = False
@@ -327,9 +343,15 @@ class LabTableExtractor:
                     except Exception:
                         pass
 
+        # 헤더 표준화: 이후 단계에서는 표준 구조(list[dict])만 사용
+        try:
+            header_roles = self._standardize_header_roles_struct(header_roles)
+        except Exception:
+            header_roles = []
+
         # 헤더-바디 일치율 게이트: OCR 헤더가 바디 타입 분포와 안 맞으면 규칙 추론으로 전환
         header_alignment: Dict[str, Any] = {}
-        if header_source == "ocr" and isinstance(header_roles, dict) and header_roles and body_lines:
+        if header_source == "ocr" and header_roles and body_lines:
             try:
                 score_overall, detail = self._evaluate_header_body_alignment(header_roles, body_lines,
                                                                              max_rows=int(self.settings.header_alignment_preview_rows))
@@ -348,7 +370,7 @@ class LabTableExtractor:
                     except Exception:
                         inferred_roles, inferred_sample = {}, []
                     if inferred_roles:
-                        header_roles = inferred_roles
+                        header_roles = self._standardize_header_roles_struct(inferred_roles)
                         header_source = "inferred"
                         header_alignment["fallback_to_inferred"] = True
                         inferred_input_sample = inferred_sample or inferred_input_sample or []
@@ -511,14 +533,12 @@ class LabTableExtractor:
                 "llm_input_sample": llm_input_sample,
                 "inferred_input_sample": inferred_input_sample,
                 # 두 가지 기준을 함께 제공: (1) 개수룰, (2) 정책룰. 기본 header_valid는 정책룰을 따름
-                "header_valid_distinct_rule": bool(header_roles) and (
-                    len([r for r in header_roles.keys() if header_roles.get(r)])
-                ) >= int(self.settings.role_min_distinct_hits),
-                "header_valid": (bool(header_roles) and bool(header_roles.get("name")) and bool(header_roles.get("unit"))
-                                   and bool(header_roles.get("result")) and bool(header_roles.get("reference") or (header_roles.get("min") and header_roles.get("max")))
-                                   and bool((header_roles.get("unit") or {}).get("meets_threshold", True))
-                                   and bool((header_roles.get("result") or {}).get("meets_threshold", True))
-                                   and bool((header_roles.get("reference") or {}).get("meets_threshold", True) or (header_roles.get("min") and header_roles.get("max")))),
+                "header_valid_distinct_rule": (lambda _m: (len(_m) >= int(self.settings.role_min_distinct_hits)))(self._roles_to_mapping(header_roles)),
+                "header_valid": (lambda _m: (bool(_m.get("name")) and bool(_m.get("unit")) and bool(_m.get("result")) and
+                                              bool(_m.get("reference") or (_m.get("min") and _m.get("max"))) and
+                                              bool((_m.get("unit") or {}).get("meets_threshold", True)) and
+                                              bool((_m.get("result") or {}).get("meets_threshold", True)) and
+                                              bool((_m.get("reference") or {}).get("meets_threshold", True) or (_m.get("min") and _m.get("max")))))(self._roles_to_mapping(header_roles)),
                 "header_source": header_source,
                 "header_alignment": header_alignment,
                 # step 7 meta
@@ -544,6 +564,91 @@ class LabTableExtractor:
             return final_doc, intermediates
         # 반환 인터미디엇이 아닌 경우에도 메타데이터는 채워둔다.
         return final_doc or doc
+
+    def extract_final_json(self, lines: Lines) -> DocumentResult:
+        """Convenience API: Run extract_from_lines and return a schema-shaped final JSON.
+
+        Guarantees the following on return, even if intermediate steps fail:
+        - Always returns a dict with keys: hospital_name, client_name, patient_name, inspection_date, tests
+        - If metadata detection fails, meta fields are empty strings ""
+        - If data detection fails, tests is an empty list []
+
+        Parameters
+        ----------
+        lines: list
+            OCR-grouped lines to process
+
+        Returns
+        -------
+        DocumentResult
+            { "hospital_name": str, "client_name": str, "patient_name": str, "inspection_date": str, "tests": [ ... ] }
+        """
+        # 1) Execute the main pipeline with intermediates for robustness
+        final_doc: DocumentResult = {}
+        intermediates: Intermediates | Dict[str, Any] = {}
+        try:
+            result = self.extract_from_lines(lines, return_intermediates=True)
+            # Expected form: (final_doc, intermediates)
+            if isinstance(result, tuple) and len(result) == 2:
+                final_doc, intermediates = result  # type: ignore[assignment]
+            elif isinstance(result, dict):
+                final_doc = result
+            else:
+                final_doc = {}
+        except Exception:
+            final_doc = {}
+            intermediates = {}
+
+        # 2) Prefer the pipeline's final_doc; fallback to intermediates' snapshot
+        if not isinstance(final_doc, dict) or not final_doc:
+            try:
+                if isinstance(intermediates, dict):
+                    maybe = intermediates.get("final_doc")
+                    if isinstance(maybe, dict):
+                        final_doc = maybe
+            except Exception:
+                final_doc = {}
+
+        # 3) Shape the output, coercing meta defaults and ensuring tests list exists
+        out: DocumentResult = {
+            "hospital_name": "",
+            "client_name": "",
+            "patient_name": "",
+            "inspection_date": "",
+            "tests": [],
+        }
+
+        def _str_or_empty(v: Any) -> str:
+            try:
+                if v is None:
+                    return ""
+                s = str(v)
+                return s if s is not None else ""
+            except Exception:
+                return ""
+
+        if isinstance(final_doc, dict):
+            out["hospital_name"] = _str_or_empty(final_doc.get("hospital_name"))
+            out["client_name"] = _str_or_empty(final_doc.get("client_name"))
+            out["patient_name"] = _str_or_empty(final_doc.get("patient_name"))
+            out["inspection_date"] = _str_or_empty(final_doc.get("inspection_date"))
+
+            raw_tests = final_doc.get("tests")
+            if isinstance(raw_tests, list):
+                shaped_tests: List[Dict[str, Any]] = []
+                for t in raw_tests:
+                    if not isinstance(t, dict):
+                        continue
+                    shaped_tests.append({
+                        "code": t.get("code"),
+                        "unit": t.get("unit"),
+                        "reference_min": t.get("reference_min"),
+                        "reference_max": t.get("reference_max"),
+                        "value": t.get("value"),
+                    })
+                out["tests"] = shaped_tests
+
+        return out
 
     # -----------------------
     # Minimal utilities
@@ -583,170 +688,126 @@ class LabTableExtractor:
             # 예외 케이스(노이즈 타입)에도 관대하게 처리
             pass
 
-
     # -----------------------
-    # 코드 후보 정규화 유틸
+    # Header roles standardization helpers
     # -----------------------
     @staticmethod
-    def _normalize_code_candidate(s: str) -> str:
-        """검사코드 후보 텍스트를 보수적으로 정규화.
+    def _standardize_header_roles_struct(header_roles: Any) -> List[Dict[str, Any]]:
+        """Normalize various header_roles shapes into a standard list of dicts:
+        [ { 'role': str, 'col_index': int, ... }, ... ] sorted by col_index.
 
-        - 주변 공백 제거
-        - 괄호 이후 내용 제거 (예: "LYMPHO(%)" -> "LYMPHO")
-        - 퍼센트 기호 제거 (예: "NEUT%" -> "NEUT")
-        - 유니코드 대시/공백 정규화는 사전 측에서도 수행된다고 가정
+        Accepts:
+        - dict role -> info(dict with col_index)
+        - dict index(int) -> role(str)
+        - already-standard list of dicts
+        Returns an empty list on invalid input.
         """
-        t = s.strip()
-        # 괄호로 시작하는 부가정보 제거
-        if "(" in t:
-            t = t.split("(", 1)[0]
-        # 퍼센트 제거
-        t = t.replace("%", "").strip()
-        return t
+        out: List[Dict[str, Any]] = []
+        try:
+            # Already a list of dicts
+            if isinstance(header_roles, list) and all(isinstance(x, dict) for x in header_roles):
+                for x in header_roles:
+                    role = str(x.get("role", "")).strip() if isinstance(x, dict) else ""
+                    ci = x.get("col_index") if isinstance(x, dict) else None
+                    if role and isinstance(ci, int):
+                        # preserve extra fields
+                        out.append(dict(x))
+                # sort by col_index
+                out.sort(key=lambda z: int(z.get("col_index", 0)))
+                return out
+            # role -> info
+            if isinstance(header_roles, dict) and header_roles:
+                # detect dict[int->str]
+                if all(isinstance(k, int) for k in header_roles.keys()) and all(isinstance(v, str) for v in header_roles.values()):
+                    for idx, role in header_roles.items():
+                        out.append({"role": role, "col_index": int(idx)})
+                    out.sort(key=lambda z: int(z.get("col_index", 0)))
+                    return out
+                # dict[str->dict]
+                if all(isinstance(k, str) for k in header_roles.keys()):
+                    for role, info in header_roles.items():
+                        if not isinstance(info, dict):
+                            continue
+                        if "col_index" not in info:
+                            continue
+                        ci = info.get("col_index")
+                        if not isinstance(ci, int):
+                            try:
+                                ci = int(ci)  # type: ignore[assignment]
+                            except Exception:
+                                continue
+                        merged = dict(info)
+                        merged.setdefault("role", role)
+                        merged["col_index"] = int(ci)
+                        out.append(merged)
+                    out.sort(key=lambda z: int(z.get("col_index", 0)))
+                    return out
+        except Exception:
+            pass
+        return []
+
+    @staticmethod
+    def _roles_to_mapping(header_roles: Any) -> Dict[str, Dict[str, Any]]:
+        """Build a role->info mapping from the standard list or legacy dict.
+        Ensures info contains 'col_index' int and 'role'.
+        """
+        try:
+            if isinstance(header_roles, list) and all(isinstance(x, dict) for x in header_roles):
+                m: Dict[str, Dict[str, Any]] = {}
+                for x in header_roles:
+                    role = str(x.get("role", "")).strip()
+                    if not role:
+                        continue
+                    ci = x.get("col_index")
+                    if not isinstance(ci, int):
+                        try:
+                            ci = int(ci)  # type: ignore[assignment]
+                        except Exception:
+                            continue
+                    info = dict(x)
+                    info["role"] = role
+                    info["col_index"] = int(ci)
+                    m[role] = info
+                return m
+            if isinstance(header_roles, dict) and header_roles:
+                # dict[str->dict] preferred
+                if all(isinstance(k, str) for k in header_roles.keys()):
+                    m = {}
+                    for role, info in header_roles.items():
+                        if not isinstance(info, dict):
+                            continue
+                        ci = info.get("col_index")
+                        if not isinstance(ci, int):
+                            try:
+                                ci = int(ci)  # type: ignore[assignment]
+                            except Exception:
+                                continue
+                        merged = dict(info)
+                        merged.setdefault("role", role)
+                        merged["col_index"] = int(ci)
+                        m[role] = merged
+                    return m
+                # dict[int->str]
+                if all(isinstance(k, int) for k in header_roles.keys()) and all(isinstance(v, str) for v in header_roles.values()):
+                    return {v: {"role": v, "col_index": int(k)} for k, v in header_roles.items()}
+        except Exception:
+            pass
+        return {}
 
     # -----------------------
-    # 코드 해석기 (외부/내부)
+    # 코드 해석기 (모듈 위임)
     # -----------------------
     def _resolve_code(self, text: str) -> Optional[str]:
         """검사코드 텍스트를 사전 기준으로 해석해 표준 코드 문자열을 반환.
 
-        우선순위:
-        1) 외부 모듈의 resolve_code (가능 시)
-        2) 주입된 사용자 resolver (self._ext_resolver)
-        3) 내부 단순 휴리스틱 (lexicon 키와 보수적 정규화 기반)
+        구현은 분리된 code_normalizer 모듈에 위임한다.
         """
-        if not text:
+        if _resolve_code_norm is None:
             return None
-
-        # 후보 생성: 정책상 '-A' 접미는 베이스 코드가 사전에 존재하면 제거하여 우선 시도
-        candidates_for_external: List[str] = []
-        raw = text
         try:
-            base = raw
-            if re.search(r"-a$", raw.strip(), flags=re.IGNORECASE):
-                base = re.sub(r"-a$", "", raw.strip(), flags=re.IGNORECASE)
-                # 베이스가 사전에 존재하는지 upper_index로 확인
-                try:
-                    if isinstance(self.lexicon, dict) and "upper_index" in self.lexicon:
-                        up_idx = self.lexicon.get("upper_index", {})  # type: ignore[assignment]
-                        if isinstance(up_idx, dict):
-                            up_key = re.sub(r"\s+", "", base.upper())
-                            if up_key in up_idx:
-                                # 베이스 우선
-                                candidates_for_external.append(base)
-                except Exception:
-                    # 확인 실패 시에도 후보군에 포함 (보수적)
-                    candidates_for_external.append(base)
-            # 원문도 후보에 포함
-            candidates_for_external.append(raw)
+            return _resolve_code_norm(text, self.lexicon, ext_resolver=self._ext_resolver)
         except Exception:
-            candidates_for_external = [raw]
-
-        # 1) 외부 모듈 우선 사용 (후보들을 순서대로 시도)
-        if resolve_code is not None and self.lexicon is not None:
-            for cand in candidates_for_external:
-                try:
-                    # trailing '#': base 우선 규칙(베이스가 사전에 존재하면 베이스를 먼저 시도)
-                    try:
-                        if re.search(r"#\s*$", cand):
-                            base = re.sub(r"#\s*$", "", cand)
-                            code = resolve_code(base, self.lexicon)
-                            if code:
-                                return code
-                    except Exception:
-                        pass
-                    code = resolve_code(cand, self.lexicon)
-                    if code:
-                        return code
-                except Exception:
-                    continue
-
-        # 2) 호출 측에서 주입한 resolver
-        if self._ext_resolver and self.lexicon is not None:
-            try:
-                code = self._ext_resolver(text, self.lexicon)
-                if code:
-                    return code
-            except Exception:
-                pass
-
-        # 3) 내부 단순 매칭 (키 직접/정규화 매칭, 대소문자 무시)
-        if not isinstance(self.lexicon, dict) or not self.lexicon:
             return None
-
-        def _try_keys(c: str) -> Optional[str]:
-            # code_lexicon.get_code_lexicon() 구조를 이해하고 upper_index를 우선 사용
-            try:
-                up_idx = self.lexicon.get("upper_index")  # type: ignore[assignment]
-                if isinstance(up_idx, dict):
-                    up_key = re.sub(r"\s+", "", c.upper())
-                    if up_key in up_idx:
-                        # upper_index는 upper_key -> canonical 매핑
-                        return up_idx[up_key]
-            except Exception:
-                pass
-            # 비상: keys에 직접 있는 구조가 들어온 특수 케이스도 대비
-            try:
-                if c in self.lexicon:  # type: ignore[operator]
-                    return c
-                cu = c.upper()
-                for k in list(self.lexicon.keys()):  # type: ignore[union-attr]
-                    if isinstance(k, str) and k.upper() == cu:
-                        return k
-            except Exception:
-                pass
-            return None
-
-    # 후보들: 원문/트림/대문자/정규화/정규화+대문자 + '-A' 접미 제거 변형
-        candidates: List[str] = []
-        seen: set[str] = set()
-
-        def _add(c: Optional[str]) -> None:
-            if not c:
-                return
-            cc = c.strip()
-            if not cc:
-                return
-            if cc not in seen:
-                candidates.append(cc)
-                seen.add(cc)
-
-        def _variants(base: str) -> List[str]:
-            out = [base]
-            try:
-                # -A 접미 제거 (대소문자 무시)
-                if re.search(r"-a$", base, flags=re.IGNORECASE):
-                    out.append(re.sub(r"-a$", "", base, flags=re.IGNORECASE))
-            except Exception:
-                pass
-            return out
-
-        for base in [text, text.strip()]:
-            for v in _variants(base):
-                _add(v)
-                _add(v.upper())
-
-        norm = self._normalize_code_candidate(text)
-        if norm:
-            for v in _variants(norm):
-                _add(v)
-                _add(v.upper())
-
-        for c in candidates:
-            # '#'-base 우선 규칙: 내부 키 매칭에서도 '#' 제거 변형을 먼저 조회
-            try:
-                if re.search(r"#\s*$", c):
-                    c_base = re.sub(r"#\s*$", "", c)
-                    key = _try_keys(c_base)
-                    if key:
-                        return key
-            except Exception:
-                pass
-            key = _try_keys(c)
-            if key:
-                # 키 자체를 표준 코드로 사용
-                return key
-        return None
 
     # -----------------------
     # Planned pipeline steps (stubs)
@@ -1000,11 +1061,19 @@ class LabTableExtractor:
     def _select_representative_sample(self, body_lines: Lines) -> List[List[str]]:
         """LLM과 동일한 기준으로 대표 샘플 행을 선택.
 
-        - 길이 모드(target_len) 기반으로 그 길이에 정확히 맞는 행만 후보
-        - 첫 토큰 코드 해석 성공
-        - 이후 열에 유닛/숫자 또는 범위가 최소 하나 존재
-        - 과도한 열(>6) 제외, 첫 토큰 중복 제외
-        - 없으면 앞쪽 최대 20행을 보수적으로 사용
+                기본 원칙은 유지하되, 바디 라인의 "reference range" 타입 비율로 K를 엄격히 결정합니다.
+
+                - K 결정 규칙(엄격):
+                    - 범위 토큰(a-b/–/~)을 가진 라인 비율 >= threshold → K=4 (Name | Reference | Result | Unit)
+                    - 범위 라인 비율 == 0 → K=5 (Name | Min | Max | Result | Unit)
+                    - 그 외(0 < 비율 < threshold) → 실패로 간주(빈 리스트 반환)
+                    - threshold는 settings.sample_reference_ratio_threshold가 있으면 사용, 없으면 0.3
+                - 후보 필터:
+                    - 첫 토큰이 코드로 해석 가능(resolve_code)
+                    - 이후 열에 유닛/숫자 또는 범위가 최소 하나 존재
+                    - 과도한 열(>6) 제외, 첫 토큰 중복 제외
+                - 샘플은 헤더컬럼 갯수(K)와 동일한 토큰 갯수를 가진 라인으로만 구성
+                - 유효 샘플이 하나도 없으면 실패(빈 리스트)
         """
         rows_all = self._rows_from_body(body_lines)
         if not rows_all:
@@ -1022,13 +1091,40 @@ class LabTableExtractor:
         def _norm_num(s: str) -> str:
             return s.strip().replace("·", ".").replace(",", ".")
 
-        chosen: List[List[str]] = []
-        for target_len in sorted(set(lengths), reverse=True):
-            if target_len < 3:
-                continue
-            candidates = [row for row in rows_all if len(row) == target_len]
+        # 1) reference-range 라인 비율로 K 가정(4 vs 5)
+        try:
+            thr = float(getattr(self.settings, "sample_reference_ratio_threshold", 0.3))
+        except Exception:
+            thr = 0.3
+
+        range_like_count = 0
+        valid_row_count = 0
+        for row in rows_all:
+            try:
+                tail = row[1:]
+            except Exception:
+                tail = []
+            # tail 내에 범위 토큰이 하나라도 있으면 range-like로 카운트
+            has_range_token = any(range_re.match(_norm_num(s)) for s in tail)
+            # 유효 행으로 카운트: 최소 3열 이상(코드 + 2개 이상)
+            if len(row) >= 3:
+                valid_row_count += 1
+                if has_range_token:
+                    range_like_count += 1
+
+        range_ratio = (range_like_count / valid_row_count) if valid_row_count > 0 else 0.0
+        if range_ratio >= thr:
+            assumed_k = 4
+        elif range_like_count == 0:
+            assumed_k = 5
+        else:
+            # 애매 구간: 실패 처리
+            return []
+
+        # 2) 길이==assumed_k 행에서 샘플 선별
+        def _filter_plausible(cands: List[List[str]]) -> List[List[str]]:
             plausible: List[List[str]] = []
-            for row in candidates:
+            for row in cands:
                 if len(row) > 6:
                     continue
                 try:
@@ -1057,15 +1153,18 @@ class LabTableExtractor:
                 if not (has_range or has_num):
                     continue
                 plausible.append(row)
-            if plausible:
-                chosen = plausible
-                break
+            return plausible
 
-        sample = chosen[:20]
-        # 샘플이 비면 앞쪽 N개 행을 사용(보수적 대체)
-        if not sample:
-            sample = rows_all[:20]
-        return sample
+        chosen: List[List[str]] = []
+        # 2-a) 우선 길이==assumed_k인 행들만 후보로
+        len_k_candidates = [row for row in rows_all if len(row) == assumed_k]
+        chosen = _filter_plausible(len_k_candidates)
+
+        # 2-b) 샘플이 없으면 실패 처리
+        if not chosen:
+            return []
+
+        return chosen[:20]
 
     # -----------------------
     # Shared compiled patterns
@@ -1123,10 +1222,13 @@ class LabTableExtractor:
             pass
 
         # 규칙 기반도 LLM과 동일한 샘플 선정 로직을 사용
+        # 엄격 규칙: 샘플 선정 실패 시 헤더 추론 자체를 실패로 간주
         sample_rows = self._select_representative_sample(body_lines)
-        # 통계 집계 소스: 샘플이 있으면 우선 사용, 없으면 전체 rows_all 사용
-        rows_all = self._rows_from_body(body_lines)
-        rows_source: List[List[str]] = sample_rows if sample_rows else rows_all
+        if not sample_rows:
+            return {}, []
+
+        # 통계 집계 소스: 샘플만 사용(일관성 확보)
+        rows_source: List[List[str]] = sample_rows
 
         # 열 개수 추정: rows_source에서 가장 긴 행의 길이
         max_cols = 0
@@ -1322,8 +1424,7 @@ class LabTableExtractor:
         has_reference_like = bool(roles.get("reference") or (roles.get("min") and roles.get("max")))
 
         # 정책 충족 여부는 반환과 분리: 역할은 항상 반환하고, 상위 레벨에서 header_valid로 보수 판단
-        # 규칙 기반 입력 샘플 구성: 앞쪽 최대 20개 행의 텍스트 배열
-        # 반환 샘플은 대표 샘플 사용
+        # 규칙 기반 입력 샘플 구성은 이미 sample_rows로 제한됨
         return roles, sample_rows
 
     def _infer_header_with_llm(self, lines: Lines, body_lines: Lines) -> Tuple[Dict[str, Any], List[List[str]]]:
@@ -1339,8 +1440,10 @@ class LabTableExtractor:
             if not getattr(self, "llm", None):
                 return {}, sample
 
-            # 공통 샘플 선택 로직 사용
+            # 공통 샘플 선택 로직 사용(엄격): 샘플 실패 시 LLM 추론도 실패 처리
             sample = self._select_representative_sample(body_lines)
+            if not sample:
+                return {}, []
 
             system_prompt = (
                 "You are an expert at labeling table columns in veterinary lab reports. "
@@ -1978,7 +2081,7 @@ class LabTableExtractor:
     # -----------------------
     def _evaluate_header_body_alignment(
         self,
-        header_roles: Dict[str, Any],
+        header_roles: Any,
         body_lines: Lines,
         *,
         max_rows: int = 20,
@@ -1997,9 +2100,11 @@ class LabTableExtractor:
         유효 열이 일부 없으면 존재하는 항목 평균.
         """
         try:
+            roles_map = self._roles_to_mapping(header_roles)
+
             def _col(role: str) -> Optional[int]:
                 try:
-                    info = header_roles.get(role) or {}
+                    info = roles_map.get(role) or {}
                     if not isinstance(info, dict):
                         return None
                     return int(info.get("col_index", -1))
@@ -2121,7 +2226,7 @@ class LabTableExtractor:
             return 0.0, {}
 
     def _build_interim_table(
-        self, body_lines: Lines, header_roles: Dict[str, Any]
+        self, body_lines: Lines, header_roles: Any
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Step 8(geometry-only): 헤더를 진실로 보고, 순수 기하 샘플(K개 토큰 라인)만으로 밴드를 형성.
 
@@ -2141,12 +2246,12 @@ class LabTableExtractor:
         K = None
         try:
             max_ci = -1
-            if isinstance(header_roles, dict) and header_roles:
-                for info in header_roles.values():
-                    if isinstance(info, dict) and "col_index" in info:
-                        ci = int(info.get("col_index", -1))
-                        if ci > max_ci:
-                            max_ci = ci
+            roles_map = self._roles_to_mapping(header_roles)
+            for info in roles_map.values():
+                if isinstance(info, dict) and "col_index" in info:
+                    ci = int(info.get("col_index", -1))
+                    if ci > max_ci:
+                        max_ci = ci
             if max_ci >= 0:
                 K = max_ci + 1
         except Exception:
@@ -2221,9 +2326,24 @@ class LabTableExtractor:
         def _assign_to_bands(toks: List[Tuple[int, int, str, Any]], bands: List[Tuple[int, int]]) -> List[str]:
             K2 = len(bands)
             cells: List[List[str]] = [[] for _ in range(K2)]
+            # 최근접 중심 판단 기준:
+            # - 우선 샘플로부터 계산한 band_centers(열의 x-중심값)를 사용
+            # - band_centers가 없거나 비정상인 경우에만 밴드 경계의 중간점으로 대체
             centers_local = [int((L + R) // 2) for (L, R) in bands]
+            try:
+                _centers_ref = list(band_centers) if isinstance(band_centers, list) and len(band_centers) == K2 else centers_local
+            except Exception:
+                _centers_ref = centers_local
+            mode = str(getattr(self.settings, "band_assignment_mode", "hybrid") or "hybrid").lower()
             for (c, _w, s, _tok) in toks:
-                # 내부 포함 우선
+                if mode == "nearest":
+                    # 항상 최근접 중심 배정
+                    if K2 > 0:
+                        nearest = min(range(K2), key=lambda ii: abs(c - _centers_ref[ii]))
+                        cells[nearest].append(s)
+                    continue
+
+                # include-only 또는 hybrid 공통: 내부 포함 우선
                 placed = False
                 for idx, (L, R) in enumerate(bands):
                     if L <= c < R:
@@ -2232,10 +2352,13 @@ class LabTableExtractor:
                         break
                 if placed:
                     continue
-                # 외부는 최근접 중심
-                if K2 > 0:
-                    nearest = min(range(K2), key=lambda ii: abs(c - centers_local[ii]))
-                    cells[nearest].append(s)
+
+                if mode == "hybrid":
+                    # 외부는 최근접 중심(하위 옵션 제거: hybrid에서는 항상 적용)
+                    if K2 > 0:
+                        nearest = min(range(K2), key=lambda ii: abs(c - _centers_ref[ii]))
+                        cells[nearest].append(s)
+                # include-only 모드는 폴백 없이 미배정(빈 칸 → 이후 UNKNOWN 처리)
             return [" ".join(col).strip() for col in cells]
 
         # 6) 전체 라인 배정
@@ -2258,7 +2381,7 @@ class LabTableExtractor:
         interim_rows: List[Dict[str, Any]],
         all_lines: Lines,
         body_lines: Lines,
-        header_roles: Dict[str, Any],
+        header_roles: Any,
     ) -> List[Dict[str, Any]]:
         """Step 8(geometry-only): 빈 셀을 'unknown'으로 채우고, 미리보기용 역할 키에 매핑.
 
@@ -2273,11 +2396,12 @@ class LabTableExtractor:
 
         # 역할→열 인덱스 맵(표시용)
         role_to_idx: Dict[str, int] = {}
-        header_present = bool(isinstance(header_roles, dict) and header_roles)
+        roles_map = self._roles_to_mapping(header_roles)
+        header_present = bool(roles_map)
         if header_present:
             for role in ["name", "reference", "min", "max", "result", "unit"]:
                 try:
-                    info = header_roles.get(role)
+                    info = roles_map.get(role)
                     if isinstance(info, dict) and "col_index" in info:
                         ci = int(info.get("col_index", -1))
                         if ci >= 0:
@@ -2323,7 +2447,7 @@ class LabTableExtractor:
 
             # 선택된 result 값에 대해, 실제 토큰(_src_tokens['result'])을 Step 8 시점에 고정 저장
             try:
-                res_info = header_roles.get("result") if isinstance(header_roles, dict) else None
+                res_info = roles_map.get("result") if isinstance(roles_map, dict) else None
                 res_col = int(res_info.get("col_index", -1)) if isinstance(res_info, dict) else -1
                 _res_val = out.get("result")
                 has_result_val = (isinstance(_res_val, str) and _res_val.strip().lower() != "unknown")
@@ -2605,7 +2729,7 @@ class LabTableExtractor:
     # Step 9: Truncate rows to header column count
     # -----------------------
     def _truncate_to_header_columns(
-        self, rows: List[Dict[str, Any]], header_roles: Dict[str, Any]
+        self, rows: List[Dict[str, Any]], header_roles: Any
     ) -> List[Dict[str, Any]]:
         """헤더 역할(col_index)에 정의된 컬럼 수를 초과하는 셀은 뒤에서 제거하여 맞춘다.
 
@@ -2625,9 +2749,10 @@ class LabTableExtractor:
         # 기준 열 수 계산
         K = None
         try:
-            if isinstance(header_roles, dict) and header_roles:
+            roles_map = self._roles_to_mapping(header_roles)
+            if roles_map:
                 max_idx = -1
-                for role, info in header_roles.items():
+                for role, info in roles_map.items():
                     if isinstance(info, dict) and "col_index" in info:
                         try:
                             ci = int(info.get("col_index", -1))
@@ -2918,7 +3043,8 @@ class LabTableExtractor:
 
             idx = intermediates.get("header_index")
             header_line = intermediates.get("header_line")
-            header_roles = intermediates.get("header_roles") or {}
+            header_roles = intermediates.get("header_roles")
+            roles_map = self._roles_to_mapping(header_roles)
             header_valid = intermediates.get("header_valid")
             header_source = intermediates.get("header_source", "unknown")
             body_lines_count = intermediates.get("body_lines_count")
@@ -2930,7 +3056,7 @@ class LabTableExtractor:
             out: List[str] = []
             if idx is None:
                 # OCR 헤더 라인이 없더라도, 추론/LLM으로 역할이 채워졌을 수 있음
-                if isinstance(header_roles, dict) and header_roles:
+                if isinstance(roles_map, dict) and roles_map:
                     out.append("ℹ️ 헤더 라인 없음 (추론/백업 사용)")
                 else:
                     out.append("❌ 헤더 라인을 찾지 못했습니다.")
@@ -2948,17 +3074,20 @@ class LabTableExtractor:
                     out.append("🖹 헤더 텍스트: <표시 실패>")
 
             # 유효성/역할 수 + 정책 기반 검사 결과도 함께 표기
-            distinct = len([r for r in header_roles.keys() if header_roles.get(r)]) if isinstance(header_roles, dict) else 0
+            try:
+                distinct = len([r for r in roles_map.keys() if roles_map.get(r)]) if isinstance(roles_map, dict) else 0
+            except Exception:
+                distinct = 0
             # 기존 플래그 우선, 없으면 distinct 기반 추정
             valid = bool(header_valid) if header_valid is not None else (distinct >= int(self.settings.role_min_distinct_hits))
             # 정책(필수 역할) 기반 재평가: name+unit+result 필수, reference 또는 (min/max) 필요
             policy_valid = False
-            if isinstance(header_roles, dict) and header_roles:
-                has_name = bool(header_roles.get("name"))
-                has_unit = bool(header_roles.get("unit"))
-                res = header_roles.get("result") or {}
+            if isinstance(roles_map, dict) and roles_map:
+                has_name = bool(roles_map.get("name"))
+                has_unit = bool(roles_map.get("unit"))
+                res = roles_map.get("result") or {}
                 has_result = bool(res)
-                has_reference_like = bool(header_roles.get("reference") or (header_roles.get("min") and header_roles.get("max")))
+                has_reference_like = bool(roles_map.get("reference") or (roles_map.get("min") and roles_map.get("max")))
                 policy_valid = has_name and has_unit and has_result and has_reference_like
             out.append(f"✅ 헤더 유효성: {valid} (roles={distinct}, threshold={self.settings.role_min_distinct_hits}) | 정책기준: {policy_valid} (필수: name+unit+result + ref|min/max)")
 
@@ -2966,11 +3095,12 @@ class LabTableExtractor:
             def _policy_and_reasons(roles_dict: Dict[str, Any]) -> Tuple[bool, List[str]]:
                 pol_valid = False
                 reasons: List[str] = []
-                if isinstance(roles_dict, dict) and roles_dict:
-                    has_name = bool(roles_dict.get("name"))
-                    has_unit = bool(roles_dict.get("unit"))
-                    has_result = bool(roles_dict.get("result"))
-                    has_ref_like = bool(roles_dict.get("reference") or (roles_dict.get("min") and roles_dict.get("max")))
+                rm = self._roles_to_mapping(roles_dict)
+                if isinstance(rm, dict) and rm:
+                    has_name = bool(rm.get("name"))
+                    has_unit = bool(rm.get("unit"))
+                    has_result = bool(rm.get("result"))
+                    has_ref_like = bool(rm.get("reference") or (rm.get("min") and rm.get("max")))
                     pol_valid = has_name and has_unit and has_result and has_ref_like
                     if not has_name:
                         reasons.append("누락: name")
@@ -2982,7 +3112,7 @@ class LabTableExtractor:
                         reasons.append("누락: reference 또는 (min+max)")
 
                     def _thr_reason(role: str, base_thresh: float) -> None:
-                        info = roles_dict.get(role) or {}
+                        info = rm.get(role) or {}
                         if isinstance(info, dict) and info:
                             meets = info.get("meets_threshold")
                             if meets is False:
@@ -3003,7 +3133,7 @@ class LabTableExtractor:
 
             # 현재 header_roles에 대한 사유 출력
             if not policy_valid:
-                _, reasons = _policy_and_reasons(header_roles)
+                _, reasons = _policy_and_reasons(roles_map)
                 if reasons:
                     out.append("\n❌ 유효성 실패 사유:")
                     for r in reasons:
@@ -3012,14 +3142,15 @@ class LabTableExtractor:
             # 역할 매핑 상세 출력 도우미
             def _render_roles(title: str, roles_dict: Dict[str, Any]) -> List[str]:
                 lines: List[str] = []
-                if isinstance(roles_dict, dict) and roles_dict:
+                rm = self._roles_to_mapping(roles_dict)
+                if isinstance(rm, dict) and rm:
                     lines.append(f"\n{title}")
                     def _col_i(v: Any) -> int:
                         try:
                             return int(v.get("col_index", -1)) if isinstance(v, dict) else -1
                         except Exception:
                             return -1
-                    for role, info in sorted(roles_dict.items(), key=lambda kv: _col_i(kv[1])):
+                    for role, info in sorted(rm.items(), key=lambda kv: _col_i(kv[1])):
                         if not isinstance(info, dict):
                             lines.append(f" - {role}: <정보 없음>")
                             continue
@@ -3067,10 +3198,10 @@ class LabTableExtractor:
                         out.append("  <표시 실패>")
 
             # 현재(최종) 역할 매핑 출력: LLM이 있었다면 규칙 기반 출력 후에 표시
-            if isinstance(header_roles, dict) and header_roles:
+            if isinstance(roles_map, dict) and roles_map:
                 # LLM이 사용되지 않았다면 평소처럼 바로 출력, 사용되었다면 위에서 규칙 기반 먼저 출력 후 이어서 출력
                 title = "\n📏 역할 매핑:"
-                out.extend(_render_roles(title, header_roles))
+                out.extend(_render_roles(title, roles_map))
 
             # 헤더 출처가 inferred인 경우, 규칙 기반 추론에 사용된 입력 샘플도 표시
             try:
@@ -3224,11 +3355,17 @@ class LabTableExtractor:
 
             # 1) 헤더/역할 구성: 실제 헤더 순서를 따르는 동적 컬럼 구성
             header_roles = intermediates.get("header_roles") or {}
+            # 표준화된 header_roles(list/any)를 roles mapping으로 변환하여 일관 사용
+            try:
+                roles_map = self._roles_to_mapping(header_roles)
+            except Exception:
+                roles_map = {}
             header_source = intermediates.get("header_source") or "unknown"
 
             def _role_label(role: str, default_label: str) -> str:
                 try:
-                    info = header_roles.get(role) if isinstance(header_roles, dict) else None
+                    roles_map = self._roles_to_mapping(header_roles)
+                    info = roles_map.get(role) if isinstance(roles_map, dict) else None
                     if header_source == "ocr" and isinstance(info, dict):
                         lab = info.get("label")
                         # 'inferred'/'llm' 같은 내부 라벨은 무시하고, 실제 텍스트일 때만 사용
@@ -3241,12 +3378,14 @@ class LabTableExtractor:
             # 헤더에 정의된 역할을 col_index 순으로 정렬하고 표시 가능한 역할만 선택
             def _col_index_for(role: str) -> int:
                 try:
-                    info = header_roles.get(role) if isinstance(header_roles, dict) else None
+                    roles_map = self._roles_to_mapping(header_roles)
+                    info = roles_map.get(role) if isinstance(roles_map, dict) else None
                     return int(info.get("col_index", 10**6)) if isinstance(info, dict) else 10**6
                 except Exception:
                     return 10**6
 
-            roles_present = [r for r in ["name", "unit", "reference", "min", "max", "result"] if isinstance(header_roles, dict) and header_roles.get(r)]
+            roles_map = self._roles_to_mapping(header_roles)
+            roles_present = [r for r in ["name", "unit", "reference", "min", "max", "result"] if isinstance(roles_map, dict) and roles_map.get(r)]
             roles_present.sort(key=_col_index_for)
 
             # reference vs (min,max) 충돌 시 min/max를 우선(문서 스키마 보존). 중복 제거.
@@ -3580,6 +3719,12 @@ class LabTableExtractor:
             stats = intermediates.get("step12_stats") or {}
             body_lines = intermediates.get("body_lines") or []
 
+            # 표준화된 header_roles(list/any)를 roles mapping으로 변환하여 일관 사용
+            try:
+                roles_map = self._roles_to_mapping(header_roles)
+            except Exception:
+                roles_map = {}
+
             # 임계값: step12에서 사용한 값이 있으면 그 값을 따름
             try:
                 conf_threshold = float(stats.get("conf_threshold", 0.94))
@@ -3588,7 +3733,7 @@ class LabTableExtractor:
 
             # 결과 열의 column-level confidence를 그대로 사용
             try:
-                res_info = header_roles.get("result") if isinstance(header_roles, dict) else None
+                res_info = roles_map.get("result") if isinstance(roles_map, dict) else None
                 base_conf: float = float(res_info.get("confidence", 0.5)) if isinstance(res_info, dict) else 0.5
             except Exception:
                 base_conf = 0.5
@@ -3637,7 +3782,7 @@ class LabTableExtractor:
                     # 특정 밴드(결과 열)에 속한 토큰만 대상으로 탐색
                     line_idx = row_obj.get("_line_idx")
                     bands = row_obj.get("_bands")
-                    res_info = header_roles.get("result") if isinstance(header_roles, dict) else None
+                    res_info = roles_map.get("result") if isinstance(roles_map, dict) else None
                     res_col = int(res_info.get("col_index", -1)) if isinstance(res_info, dict) else -1
                     if not (isinstance(line_idx, int) and isinstance(bands, list) and 0 <= res_col < len(bands)):
                         # 밴드 정보를 사용할 수 없으면 라인 전체에서 탐색(폴백)
@@ -3929,9 +4074,11 @@ class LabTableExtractor:
                 return "ℹ️ final_doc.tests 비어있음 (Step 13 미실행 또는 이전 단계 결과 없음)"
 
             # 결과 열의 column-level confidence를 기본값으로 사용
-            header_roles = intermediates.get("header_roles") or {}
+            # 표준화된 header_roles(list/any)를 roles mapping으로 변환하여 사용
+            header_roles = intermediates.get("header_roles")
             try:
-                res_info = header_roles.get("result") if isinstance(header_roles, dict) else None
+                roles_map = self._roles_to_mapping(header_roles)
+                res_info = roles_map.get("result") if isinstance(roles_map, dict) else None
                 base_conf: float = float(res_info.get("confidence", 0.5)) if isinstance(res_info, dict) else 0.5
             except Exception:
                 base_conf = 0.5
@@ -4031,7 +4178,7 @@ class LabTableExtractor:
     # -----------------------
     # Step 12 filters: UNKNOWN, low confidence, de-dup by code(keep last)
     # -----------------------
-    def _apply_step12_filters(self, final_doc: DocumentResult, header_roles: Dict[str, Any], *, conf_threshold: float = 0.94) -> Tuple[DocumentResult, Dict[str, Any]]:
+    def _apply_step12_filters(self, final_doc: DocumentResult, header_roles: Any, *, conf_threshold: float = 0.94) -> Tuple[DocumentResult, Dict[str, Any]]:
         """Apply Step 12 filters on final_doc.tests.
 
         Rules:
@@ -4050,7 +4197,8 @@ class LabTableExtractor:
 
         # Base confidence from header result role
         try:
-            res_info = header_roles.get("result") if isinstance(header_roles, dict) else None
+            roles_map = self._roles_to_mapping(header_roles)
+            res_info = roles_map.get("result") if isinstance(roles_map, dict) else None
             base_conf: float = float(res_info.get("confidence", 0.5)) if isinstance(res_info, dict) else 0.5
         except Exception:
             base_conf = 0.5

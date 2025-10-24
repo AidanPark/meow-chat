@@ -1,46 +1,46 @@
 === Output for 20241107.jpg ===
 Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20241107.jpg
-Generated on: 2025-10-23 04:28:55.198600 (Processing time: 00:18.80)
+Generated on: 2025-10-24 22:32:22 (Processing time: 00:05.02)
 
 🧾 Step 12: 포함/제외 tests 전체 (라인 순)
-code        |   value | value_conf | unit    | reference_min | reference_max | drop_reason              
-------------+---------+------------+---------+---------------+---------------+--------------------------
-LYMPHO      |    20.7 |     0.9994 | %       |       UNKNOWN |       UNKNOWN | duplicated_code_kept_last
-MONO        |    12.1 |     0.9982 | %       |       UNKNOWN |       UNKNOWN | duplicated_code_kept_last
-EOS         |     0.1 |     0.9989 | %       |       UNKNOWN |       UNKNOWN | duplicated_code_kept_last
-BASO        |     0.2 |     0.9975 | %       |       UNKNOWN |       UNKNOWN | duplicated_code_kept_last
-NEUT        |   10.22 |     0.9382 | K/µL    |          1.15 |         10.29 | duplicated_code_kept_last
-LYMPH       |    3.17 |     0.9277 | K/µL    |          0.92 |          6.88 | duplicated_code_kept_last
-MONO        |    1.85 |     0.9571 | K/µL    |          0.05 |          0.67 | duplicated_code_kept_last
-EOS         |    0.02 |     0.9236 | K/µL    |          0.17 |          1.57 | duplicated_code_kept_last
-BASO        |    0.03 |     0.9475 | K/µL    |          0.01 |          0.26 | duplicated_code_kept_last
-PLT         |   121.0 |     0.9373 | K/µL    |         151.0 |         600.0 | duplicated_code_kept_last
-MPV         |    22.5 |     0.9597 | fL      |       UNKNOWN |       UNKNOWN |                          
-PDW         | UNKNOWN |     1.0000 | fL      |       UNKNOWN |       UNKNOWN | unknown_value            
-PCT         |    0.27 |     0.9991 | %       |       UNKNOWN |       UNKNOWN |                          
-RETHGB      |    14.1 |     0.9986 | pg      |          13.2 |          20.8 |                          
-proBNP      | UNKNOWN |     1.0000 | UNKNOWN |       UNKNOWN |       UNKNOWN | unknown_value            
-RBC         |    2.18 |     0.9756 | M/µL    |          6.54 |          12.2 |                          
-HCT         |     8.2 |     0.9979 | %       |          30.3 |          52.3 |                          
-HGB         |     0.4 |     0.9482 | g/dL    |           9.8 |          16.2 |                          
-MCV         |    37.6 |     0.9994 | fL      |          35.9 |          53.1 |                          
-MCH         |     1.8 |     0.8405 | pg      |          11.8 |          17.3 |                          
-MCHC        |     4.9 |     0.9950 | g/dL    |          28.1 |          35.8 |                          
-RDW         |    23.5 |     0.9989 | %       |          15.0 |          27.0 |                          
-RETIC       |     0.9 |     0.9499 | K/µL    |           3.0 |          50.0 |                          
-WBC         |   15.01 |     0.9787 | K/µL    |          2.87 |         17.02 |                          
-NEUTROPHILS |    71.7 |     0.9985 | %       |       UNKNOWN |       UNKNOWN |                          
-LYMPHO      |    22.9 |     0.9991 | %       |       UNKNOWN |       UNKNOWN |                          
-MONO        |     4.8 |     0.9984 | %       |       UNKNOWN |       UNKNOWN |                          
-EOS         |     0.5 |     0.9994 | %       |       UNKNOWN |       UNKNOWN |                          
-BASO        |     0.1 |     0.9992 | %       |       UNKNOWN |       UNKNOWN |                          
-NEUT        |   10.77 |     0.9536 | K/µL    |          1.15 |         10.29 |                          
-LYMPH       |    3.43 |     0.9615 | K/µL    |          0.92 |          6.88 |                          
-MONO        |    0.72 |     0.9527 | K/µL    |          0.05 |          0.67 |                          
-EOS         |    0.08 |     0.9466 | K/µL    |          0.17 |          1.57 |                          
-BASO        |    0.01 |     0.9564 | K/µL    |          0.01 |          0.26 |                          
-PLT         |     8.0 |     0.8957 | K/µL    |         151.0 |         600.0 |                          
+code        |   value | value_conf | unit | reference_min | reference_max | drop_reason              
+------------+---------+------------+------+---------------+---------------+--------------------------
+LYMPHO      |    20.7 |     0.9994 | %    |       UNKNOWN |       UNKNOWN | duplicated_code_kept_last
+MONO        |    12.1 |     0.9988 | %    |       UNKNOWN |       UNKNOWN | duplicated_code_kept_last
+EOS         |     0.1 |     0.9993 | %    |       UNKNOWN |       UNKNOWN | duplicated_code_kept_last
+BASO        |     0.2 |     0.9988 | %    |       UNKNOWN |       UNKNOWN | duplicated_code_kept_last
+NEUT        |   10.22 |     0.9734 | K/µL |          1.15 |         10.29 | duplicated_code_kept_last
+LYMPH       |    3.17 |     0.9445 | K/µL |          0.92 |          6.88 | duplicated_code_kept_last
+MONO        |    1.85 |     0.9180 | K/µL |          0.05 |          0.67 | duplicated_code_kept_last
+EOS         |    0.02 |     0.9451 | K/µL |          0.17 |          1.57 | duplicated_code_kept_last
+BASO        |    0.03 |     0.9363 | K/µL |          0.01 |          0.26 | duplicated_code_kept_last
+PLT         |   121.0 |     0.8862 | K/µL |         151.0 |         600.0 | duplicated_code_kept_last
+MPV         |    22.5 |     0.9982 | fL   |       UNKNOWN |       UNKNOWN |                          
+PDW         | UNKNOWN |     1.0000 | fL   |       UNKNOWN |       UNKNOWN | unknown_value            
+PCT         |    0.27 |     0.9993 | %    |       UNKNOWN |       UNKNOWN |                          
+RETHGB      |    14.1 |     0.9989 | pg   |          13.2 |          20.8 |                          
+RBC         |    2.18 |     0.9728 | M/µL |          6.54 |          12.2 |                          
+HCT         |     8.2 |     0.9972 | %    |          30.3 |          52.3 |                          
+HGB         |     0.4 |     0.9713 | g/dL |           9.8 |          16.2 |                          
+MCV         |    37.6 |     0.9986 | fL   |          35.9 |          53.1 |                          
+MCH         |     1.8 |     0.9991 | pg   |          11.8 |          17.3 |                          
+MCHC        |     4.9 |     0.9989 | g/dL |          28.1 |          35.8 |                          
+RDW         |    23.5 |     0.9992 | %    |          15.0 |          27.0 |                          
+RETIC       |     0.9 |     0.9456 | K/µL |           3.0 |          50.0 |                          
+WBC         |   15.01 |     0.9731 | K/µL |          2.87 |         17.02 |                          
+NEUTROPHILS |    71.7 |     0.9994 | %    |       UNKNOWN |       UNKNOWN |                          
+LYMPHO      |    22.9 |     0.9984 | %    |       UNKNOWN |       UNKNOWN |                          
+MONO        |     4.8 |     0.9387 | %    |       UNKNOWN |       UNKNOWN |                          
+EOS         |     0.5 |     0.9990 | %    |       UNKNOWN |       UNKNOWN |                          
+BASO        |     0.1 |     0.9990 | %    |       UNKNOWN |       UNKNOWN |                          
+NEUT        |   10.77 |     0.9201 | K/µL |          1.15 |         10.29 |                          
+LYMPH       |    3.43 |     0.9668 | K/µL |          0.92 |          6.88 |                          
+MONO        |    0.72 |     0.9757 | K/µL |          0.05 |          0.67 |                          
+EOS         |    0.08 |     0.9562 | K/µL |          0.17 |          1.57 |                          
+BASO        |    0.01 |     0.9665 | K/µL |          0.01 |          0.26 |                          
+PLT         |     8.0 |     0.9392 | K/µL |         151.0 |         600.0 |
 
+🧾 Step 13: 최종 테이블
 🏥 hospital_name: (None)
 👤 client_name  : (None)
 🐾 patient_name : (None)
@@ -74,11 +74,11 @@ BASO        |  0.01 | K/µL |          0.01 |          0.26
 PLT         |   8.0 | K/µL |         151.0 |         600.0
 
 📊 QA 요약:
- - rows: 35
+ - rows: 34
  - truncated_rows: 0
- - unit_canonical_coverage: (34, 35)
- - result_norm_coverage: (33, 35)
- - step12_removed_unknown: 2
+ - unit_canonical_coverage: (34, 34)
+ - result_norm_coverage: (33, 34)
+ - step12_removed_unknown: 1
  - step12_removed_low_conf: 0
  - step12_dedup_removed: 10
  - step12_conf_threshold: 0.94

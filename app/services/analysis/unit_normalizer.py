@@ -65,13 +65,20 @@ def normalize_unit_simple(unit: str) -> Optional[str]:
     if not u or u.upper() == "UNKNOWN":
         return None
     
+    # 0-) OCR 노이즈 1차 제거: 파이프(|), 전각 파이프(｜), 눈에 띄는 테두리 기호 제거
+    #     - 앞뒤 가장자리의 불필요한 구두점/장식 제거
+    #     - 내부의 파이프 기호 제거(단위에는 사용되지 않음)
+    u = _clean_unit_ocr_noise(u)
+    
     # 특수 케이스 선(先) 처리: 장비 표기 분절로 '10 x3/µL'처럼 분리된 형태
     # - '10 x3/µL', '10x3/µL', '10 ×3/µL', '10 x3/uL' 등은 모두 10^3/µL 의미로 간주
-    # - '10 x6/µL' 계열은 10^6/µL 의미
+    # - 분모가 일부 유실된 형태도 보정: '10 x3/μ', '10 x6/', '10 x3/μuL' → 각각 10^3/µL, 10^6/µL로 간주
     # 이 규칙은 값+단위 혼합 판단보다 먼저 적용해 오탐을 방지
-    if re.fullmatch(r"10\s*[x×]\s*3\s*/\s*(?:µ|μ|u)L", u, re.IGNORECASE):
+    if re.fullmatch(r"10\s*[x×]\s*3\s*/\s*(?:µ|μ|u)(?:u?L)?\s*", u, re.IGNORECASE) or \
+       re.fullmatch(r"10\s*[x×]\s*3\s*/\s*", u, re.IGNORECASE):
         u = "10^3/µL"
-    elif re.fullmatch(r"10\s*[x×]\s*6\s*/\s*(?:µ|μ|u)L", u, re.IGNORECASE):
+    elif re.fullmatch(r"10\s*[x×]\s*6\s*/\s*(?:µ|μ|u)(?:u?L)?\s*", u, re.IGNORECASE) or \
+         re.fullmatch(r"10\s*[x×]\s*6\s*/\s*", u, re.IGNORECASE):
         u = "10^6/µL"
 
     # 값+단위 혼합 문자열 감지 (예: 'neg pos/n', '12.5 mg/dL')
@@ -109,6 +116,32 @@ def normalize_unit_simple(unit: str) -> Optional[str]:
     u = _normalize_prefixes(u)
 
     return u
+
+
+def _clean_unit_ocr_noise(s: str) -> str:
+    """단위 토큰에서 흔한 OCR 노이즈를 보수적으로 제거한다.
+
+    규칙(보수적):
+    - 전각/반각 파이프 문자 제거: '|'(U+007C), '｜'(U+FF5C)
+    - 앞/뒤 가장자리의 구두점/장식 제거: , ; : · • … ~ _ - — – 등
+    - 제로폭 공백류 제거
+    - 내부 연속 공백은 한 칸으로 축소(최소화)
+
+    주의: 알파벳, 숫자, '/', '%', '‰', '^', 'x', '×', 'µ', 'μ', 'L' 등 단위 관련 문자는 보존.
+    """
+    if not isinstance(s, str):
+        return s
+    t = s
+    # 제로폭/비가시 공백 제거
+    t = t.replace('\u200b', '').replace('\u200c', '').replace('\u200d', '')
+    # 파이프류 제거
+    t = t.replace('|', '').replace('｜', '')
+    # 가장자리의 장식성 문자 제거
+    t = re.sub(r'^[\s,;:·•…~_\-—–]+', '', t)
+    t = re.sub(r'[\s,;:·•…~_\-—–]+$', '', t)
+    # 내부 다중 공백 축소
+    t = re.sub(r'\s+', ' ', t)
+    return t.strip()
 
 
 def _is_value_unit_mixed(s: str) -> bool:
@@ -325,10 +358,37 @@ def _apply_equals_overrides(u: str) -> Optional[str]:
         "mg/d": "mg/dL",
         "MG/": "mg/dL",
         "umol": "µmol/L",
+        "umol/": "µmol/L",
         "mmol": "mmol/L",
         "ug/mL": "µg/mL",
         "ug/ml": "µg/mL",
+        # mg' d 류 오타 보정 → mg/d (이후 규칙으로 mg/dL 처리)
+        "mg'd": "mg/d",
+        "MG'D": "mg/d",
+        # mmH → mmHg (g 유실 보정)
+        "mmH": "mmHg",
+        "MMH": "mmHg",
+        # OCR g↔9 혼동 보정: Pg/pG/P9/p9 → pg
+        "P9": "pg",
+        "p9": "pg",
+        "ug/D": "µg/dL",
+        "UG/D": "µg/dL",
+        "ug/d": "µg/dL",
+        "UG/d": "µg/dL",
         "G/DL": "g/dL",
+        "mEq/": "mEq/L",
+        "MEQ/": "mEq/L",
+        "meq/": "mEq/L",
+        "mEq": "mEq/L",
+        "Pg": "pg",
+        "PG": "pg",
+        "pG": "pg",
+        "Pg/mL": "pg/mL",
+        "PG/mL": "pg/mL",
+        "pG/mL": "pg/mL",
+        "Pg/L": "pg/L",
+        "PG/L": "pg/L",
+        "pG/L": "pg/L",
     }
     return mapping.get(u)
 
@@ -365,15 +425,39 @@ def test_normalize_unit_simple():
         ("g/L", "g/L"),
         ("%", "%"),
         ("U/L", "U/L"),
-    ("10^6/µL", "M/µL"),
-        
-    # 명시적 equals 오버라이드
-    ("mg/d", "mg/dL"),
-    ("MG/", "mg/dL"),
-    ("umol", "µmol/L"),
-    ("mmol", "mmol/L"),
-    ("ug/mL", "µg/mL"),
-    ("ug/ml", "µg/mL"),
+        ("10^6/µL", "M/µL"),
+            
+        # 명시적 equals 오버라이드
+        ("mg/d", "mg/dL"),
+        ("MG/", "mg/dL"),
+        ("umol", "µmol/L"),
+        ("mmol", "mmol/L"),
+        ("ug/mL", "µg/mL"),
+        ("ug/ml", "µg/mL"),
+        ("mEq/", "mEq/L"),
+        ("MEQ/", "mEq/L"),
+        ("meq/", "mEq/L"),
+        ("mEq", "mEq/L"),
+        ("|mg/d ", "mg/dL"),
+    ("umol/", "µmol/L"),
+    ("mg'd", "mg/dL"),  # ' → / 보정 후 mg/d → mg/dL 규칙 적용
+    ("mmH", "mmHg"),
+    ("P9", "pg"),
+    ("p9", "pg"),
+    ("10 x3/μ", "K/µL"),
+    ("10 x3/μuL", "K/µL"),
+    ("10 x6/", "M/µL"),
+        ("ug/D", "µg/dL"),
+        ("UG/D", "µg/dL"),
+        ("ug/d", "µg/dL"),
+
+        # Pg → pg 계열 (요청 사항)
+        ("Pg", "pg"),
+        ("PG", "pg"),
+        ("pG", "pg"),
+        ("Pg/mL", "pg/mL"),
+        ("PG/mL", "pg/mL"),
+        ("Pg/L", "pg/L"),
 
         # OCR 혼동 보정
         ("ugD", "µg/dL"),

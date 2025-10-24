@@ -1,6 +1,6 @@
 === Output for 20241121_2.png ===
 Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20241121_2.png
-Generated on: 2025-10-23 16:46:35.373816 (Processing time: 00:16.57)
+Generated on: 2025-10-24 22:32:31 (Processing time: 00:08.89)
 
 🧾 Step 12: 포함/제외 tests 전체 (라인 순)
 code       |   value | value_conf | unit  | reference_min | reference_max | drop_reason  
@@ -15,6 +15,7 @@ RDW-SD     |    26.0 |     0.9821 | fL    |           0.1 |          99.9 |
 RDW-CV     |    15.0 |     0.9782 | %     |          14.4 |          19.4 |              
 SAA-Vcheck | UNKNOWN |     1.0000 | µg/mL |           0.0 |           5.0 | unknown_value
 
+🧾 Step 13: 최종 테이블
 🏥 hospital_name: (None)
 👤 client_name  : (None)
 🐾 patient_name : (None)
