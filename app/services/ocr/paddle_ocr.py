@@ -1,12 +1,3 @@
-"""
-Korean OCR using PaddleOCR
-
-이 모듈은 PaddleOCR을 사용하여 한국어 텍스트 인식을 수행하는 클래스를 제공합니다.
-
-Author: yunwoong7 (modified for latest PaddleOCR compatibility)
-License: Apache 2.0
-"""
-
 import cv2
 import numpy as np
 import re
@@ -15,6 +6,8 @@ from app.services.analysis import line_preprocessor as lp
 import jsonpickle
 from typing import Optional
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 class PaddleOCRService:
     """
@@ -28,6 +21,10 @@ class PaddleOCRService:
         _ocr (PaddleOCR): PaddleOCR 인스턴스
     """
     
+    # 클래스 전역 OCR 동시성 제어자 (lazy-init)
+    _OCR_SEMAPHORE: Optional[threading.Semaphore] = None
+    _OCR_SEMAPHORE_MAX: Optional[int] = None
+
     def __init__(self, lang: str = "korean", **kwargs):
         """
         MyPaddleOCR 클래스 초기화
@@ -38,6 +35,39 @@ class PaddleOCRService:
         """
         self.lang = lang
         self.init_kwargs = kwargs.copy()  # 초기화에 사용된 추가 인자 저장
+
+        # 동시성 옵션 (kwargs에서 분리하여 내부 사용)
+        self.enable_ocr_lock: bool = bool(self.init_kwargs.pop("enable_ocr_lock", True))
+        self.ocr_max_concurrency: int = int(self.init_kwargs.pop("ocr_max_concurrency", 2))
+        self.ocr_use_thread_pool: bool = bool(self.init_kwargs.pop("ocr_use_thread_pool", False))
+        self.ocr_pool_size: Optional[int] = self.init_kwargs.pop("ocr_pool_size", None)
+        try:
+            if self.ocr_pool_size is not None:
+                self.ocr_pool_size = int(self.ocr_pool_size)
+        except Exception:
+            self.ocr_pool_size = None
+
+        # 인스턴스 락
+        self._ocr_lock: Optional[threading.RLock] = threading.RLock() if self.enable_ocr_lock else None
+        # 클래스 전역 세마포어 lazy-init (프로세스 단위 공통 제한)
+        try:
+            m = int(self.ocr_max_concurrency or 0)
+            if m > 0:
+                cls = self.__class__
+                if getattr(cls, "_OCR_SEMAPHORE", None) is None or getattr(cls, "_OCR_SEMAPHORE_MAX", None) != m:
+                    cls._OCR_SEMAPHORE = threading.Semaphore(m)
+                    cls._OCR_SEMAPHORE_MAX = m
+        except Exception:
+            pass
+
+        # 선택적 스레드 풀 (동시 처리 시 서버의 스레딩 정책에 맞게 조절)
+        self._executor: Optional[ThreadPoolExecutor] = None
+        if self.ocr_use_thread_pool:
+            pool_size = self.ocr_pool_size if (self.ocr_pool_size and self.ocr_pool_size > 0) else max(1, self.ocr_max_concurrency)
+            try:
+                self._executor = ThreadPoolExecutor(max_workers=pool_size, thread_name_prefix="paddleocr")
+            except Exception:
+                self._executor = None
         
         # PaddleOCR 인스턴스 생성 (전달받은 모든 파라미터 사용)
         self._ocr_engine = PaddleOCR(
@@ -55,8 +85,37 @@ class PaddleOCRService:
             # text_recognition_batch_size=1,     # 배치 크기         
             # return_word_box=True,              # 단어별 박스 반환       
             # text_det_unclip_ratio=2.5,         # 텍스트 박스 확장  
-            **kwargs
+            **self.init_kwargs
         )
+
+    # 내부 유틸: 세마포어/락으로 OCR 호출 보호 후 예외/결과 처리
+    def _predict_guarded(self, inp) -> list[dict] | None:
+        sem = getattr(self.__class__, "_OCR_SEMAPHORE", None)
+        lock = self._ocr_lock if self.enable_ocr_lock else None
+        if sem is not None:
+            sem.acquire()
+        try:
+            if lock is not None:
+                lock.acquire()
+            try:
+                # 실제 호출은 선택적으로 스레드 풀을 통해 실행
+                if self._executor is not None:
+                    fut = self._executor.submit(self._ocr_engine.predict, inp)
+                    return fut.result()
+                else:
+                    return self._ocr_engine.predict(inp)
+            finally:
+                if lock is not None:
+                    try:
+                        lock.release()
+                    except Exception:
+                        pass
+        finally:
+            if sem is not None:
+                try:
+                    sem.release()
+                except Exception:
+                    pass
 
     def get_available_langs(self):
         """
@@ -585,8 +644,6 @@ class PaddleOCRService:
         
         return preprocessing_settings
 
-
-
     def run_ocr_from_path(self, file_path: str) -> list[dict] | None:
         """
         파일 경로에서 OCR을 실행하고 원본 결과를 반환합니다.
@@ -598,10 +655,8 @@ class PaddleOCRService:
             list[dict] | None: PaddleOCR 원본 결과 (성공시 OCRResult 딕셔너리 리스트, 실패시 None)
         """
         try:
-            # PaddleOCR 원본 결과 반환
-            result = self._ocr_engine.predict(file_path)
-            # print(f"result: {result}")
-
+            # PaddleOCR 원본 결과 반환 (동시성 보호)
+            result = self._predict_guarded(file_path)
             return result
             
         except Exception as e:
@@ -619,8 +674,8 @@ class PaddleOCRService:
             list[dict] | None: PaddleOCR 원본 결과 (성공시 OCRResult 딕셔너리 리스트, 실패시 None)
         """
         try:
-            # PaddleOCR 원본 결과 반환
-            result = self._ocr_engine.predict(image_array)
+            # PaddleOCR 원본 결과 반환 (동시성 보호)
+            result = self._predict_guarded(image_array)
             return result
             
         except Exception as e:
@@ -645,8 +700,8 @@ class PaddleOCRService:
                 print("❌ 이미지 디코딩 실패: 지원되지 않는 형식이거나 손상된 이미지입니다.")
                 return None
             
-            # numpy 배열로 OCR 실행 (재귀 호출)
-            return self.run_ocr_from_nparray(cv_image)
+            # numpy 배열로 OCR 실행 (동시성 보호)
+            return self._predict_guarded(cv_image)
             
         except Exception as e:
             print(f"❌ 바이트 데이터 OCR 실패: {e}")

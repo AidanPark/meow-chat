@@ -35,6 +35,9 @@ transformers>=4.36.0
 aistudio-sdk>=0.3.0
 onnxruntime>=1.16.3
 
+# 🤖 LLM 클라이언트 (OpenAI)
+openai>=1.40.0
+
 # 💾 고성능 데이터 형식 (conda 기본 보완)
 ujson>=5.8.0                    # 고속 JSON
 shapely>=2.0.2                  # 기하학적 객체

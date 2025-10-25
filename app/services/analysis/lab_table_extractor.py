@@ -20,6 +20,14 @@ import logging
 import re
 from statistics import median
 from functools import lru_cache
+import os
+import threading
+
+# 선택적 OpenAI 클라이언트 (설치되지 않았을 수 있음)
+try:  # pragma: no cover
+    from openai import OpenAI  # type: ignore
+except Exception:  # pragma: no cover
+    OpenAI = None  # type: ignore
 
 try:
     # 검사코드 사전 모듈은 아래 헬퍼들을 제공합니다.
@@ -63,6 +71,9 @@ class Settings:
     use_llm: bool = False
     debug: bool = False
     canonicalize_codes: bool = True
+    # LLM 동시성 제어 옵션
+    enable_llm_lock: bool = True
+    llm_max_concurrency: int = 2
 
     # 헤더 추론 보수 임계치 설정 (Step 7)
     min_rows_for_inference: int = 8
@@ -146,11 +157,6 @@ class Settings:
 class LabTableExtractor:
     """랩 테이블에 대해 5–12단계를 오케스트레이션하는 규칙 우선 추출기.
 
-    참고(4.x 단계 재인덱싱):
-    - LinePreprocessor에 4.4 "선두 이름 병합(괄호형)" 단계가 추가되었습니다.
-    - 이에 따라 기존 4.4(값/단위 분리)→4.5, 4.5(값 플래그 주석)→4.6, 4.6(상태 토큰 제거)→4.7로 한 단계씩 뒤로 이동했습니다.
-    - 본 클래스는 5~12단계를 다루므로 동작 변경은 없으나, 주석상의 단계 번호 참조 시 위 재인덱싱을 고려하십시오.
-
     공개 진입점
     -----------
     extract_from_lines(lines, return_intermediates=False)
@@ -160,8 +166,12 @@ class LabTableExtractor:
     ------
     - lexicon: 검사 항목 코드를 해석하기 위한 사전
     - logger: 선택적 로거 (기본은 모듈 로거)
-    - llm_client: 선택적 LLM (백업 추론용)
+    - api_key: 선택적 OpenAI API 키 (백업 추론용 LLM 활성화)
     """
+
+    # 클래스 전역 LLM 동시성 제어자 (lazy-init)
+    _LLM_SEMAPHORE: Optional[threading.Semaphore] = None
+    _LLM_SEMAPHORE_MAX: Optional[int] = None
 
     def __init__(
         self,
@@ -170,14 +180,43 @@ class LabTableExtractor:
         lexicon: Optional[Dict[str, Any]] = None,
         resolver: Optional[Callable[[str, Dict[str, Any]], Optional[str]]] = None,
         logger: Optional[logging.Logger] = None,
-        llm_client: Optional[Any] = None,
+        api_key: Optional[str] = None,
         llm_model: Optional[str] = None,
     ) -> None:
         self.settings = settings or Settings()
         self.logger = logger or logging.getLogger(__name__)
-        self.llm = llm_client
+        # LLM 클라이언트는 내부에서 관리한다.
         self.llm_model = llm_model or "gpt-4.1-mini"
+        self.llm = None
+        # 우선순위: 전달된 api_key > 환경변수 OPENAI_API_KEY
+        self.llm_api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        if self.llm_api_key and OpenAI is not None:
+            try:
+                self.llm = OpenAI(api_key=self.llm_api_key)  # type: ignore[call-arg]
+            except Exception:
+                # 클라이언트 초기화 실패 시, LLM 기능은 비활성화
+                self.logger.warning("OpenAI 클라이언트 초기화 실패: LLM 기능 비활성화")
+                self.llm = None
         self._ext_resolver = resolver
+
+        # LLM 동시성 제어 - 인스턴스 락 및 클래스 전역 세마포어
+        try:
+            self._llm_lock = threading.RLock() if bool(getattr(self.settings, "enable_llm_lock", True)) else None
+        except Exception:
+            self._llm_lock = None
+        # 클래스 전역 세마포어의 lazy-init 및 재설정
+        try:
+            if getattr(self.settings, "use_llm", False):
+                m = int(getattr(self.settings, "llm_max_concurrency", 2) or 0)
+                if m > 0:
+                    cls = self.__class__
+                    # 기존 값과 다르면 재생성
+                    if getattr(cls, "_LLM_SEMAPHORE", None) is None or getattr(cls, "_LLM_SEMAPHORE_MAX", None) != m:
+                        cls._LLM_SEMAPHORE = threading.Semaphore(m)
+                        cls._LLM_SEMAPHORE_MAX = m
+        except Exception:
+            # 동시성 제어는 옵션이므로 실패해도 전체 파이프라인을 막지 않는다
+            pass
 
         # 사전은 가능한 경우 지연 초기화합니다.
         if lexicon is not None:
@@ -565,7 +604,7 @@ class LabTableExtractor:
         # 반환 인터미디엇이 아닌 경우에도 메타데이터는 채워둔다.
         return final_doc or doc
 
-    def extract_final_json(self, lines: Lines) -> DocumentResult:
+    def extract(self, lines: Lines) -> DocumentResult:
         """Convenience API: Run extract_from_lines and return a schema-shaped final JSON.
 
         Guarantees the following on return, even if intermediate steps fail:
@@ -687,6 +726,34 @@ class LabTableExtractor:
         except Exception:
             # 예외 케이스(노이즈 타입)에도 관대하게 처리
             pass
+
+    @staticmethod
+    def _with_canonical_first_token(line: Line, new_text: str) -> Line:
+        """Return a shallow-cloned line whose 첫 토큰 텍스트만 교체한다.
+
+        원본 line 객체는 수정되지 않는다."""
+        try:
+            if isinstance(line, (list, tuple)):
+                cloned: List[Any] = []
+                for idx, tok in enumerate(line):
+                    if idx == 0:
+                        if isinstance(tok, dict):
+                            new_tok = dict(tok)
+                            new_tok["text"] = new_text
+                        else:
+                            new_tok = new_text
+                    else:
+                        new_tok = dict(tok) if isinstance(tok, dict) else tok
+                    cloned.append(new_tok)
+                return cloned
+            if isinstance(line, dict):
+                new_line = dict(line)
+                new_line["text"] = new_text
+                return new_line
+        except Exception:
+            # 복제 과정에서 문제가 생기면 원본을 그대로 반환해 추후 단계에서 처리
+            pass
+        return line
 
     # -----------------------
     # Header roles standardization helpers
@@ -867,8 +934,10 @@ class LabTableExtractor:
 
             if code:
                 if self.settings.canonicalize_codes:
-                    self._replace_first_token_text_inplace(line, code)
-                body.append(line)
+                    canonical_line = self._with_canonical_first_token(line, code)
+                    body.append(canonical_line)
+                else:
+                    body.append(line)
             else:
                 dropped.append((idx, first, self._line_join_texts(line)))
 
@@ -1460,7 +1529,7 @@ class LabTableExtractor:
                 "notes": "Pick exactly one index per applicable role. Use reference OR (min and max), not both. Avoid duplicate indices across roles."
             }
 
-            # OpenAI Chat Completions 명시적 호출
+            # OpenAI Chat Completions 호출 (락/세마포어 보호)
             try:
                 payload = {
                     "model": getattr(self, "llm_model", "gpt-4.1-mini"),
@@ -1471,28 +1540,52 @@ class LabTableExtractor:
                     "temperature": 0,
                     "response_format": {"type": "json_object"},
                 }
-                # 가독성을 위해 명시적으로 호출; 미지원 시 AttributeError로 처리
-                try:
-                    resp = self.llm.chat.completions.create(**payload)  # type: ignore[attr-defined]
-                except AttributeError:
-                    return {}, sample
 
                 content = ""
+                # 클래스 전역 세마포어 및 인스턴스 락 획득
+                sem = getattr(self.__class__, "_LLM_SEMAPHORE", None)
+                lock = getattr(self, "_llm_lock", None) if bool(getattr(self.settings, "enable_llm_lock", True)) else None
+
+                if sem is not None:
+                    sem.acquire()
                 try:
-                    choices = getattr(resp, "choices", None)
-                    if isinstance(choices, list) and choices:
-                        ch0 = choices[0]
-                        msg = getattr(ch0, "message", None)
-                        if msg is not None:
-                            c = getattr(msg, "content", None)
-                            if isinstance(c, str) and c:
-                                content = c
-                        if not content and isinstance(ch0, dict):
-                            content = ch0.get("message", {}).get("content", "") or ch0.get("text", "")
-                    if not content and isinstance(resp, dict):
-                        content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
-                except Exception:
-                    pass
+                    if lock is not None:
+                        lock.acquire()
+                    try:
+                        # 가독성을 위해 명시적으로 호출; 미지원 시 AttributeError로 처리
+                        try:
+                            resp = self.llm.chat.completions.create(**payload)  # type: ignore[attr-defined]
+                        except AttributeError:
+                            return {}, sample
+
+                        try:
+                            choices = getattr(resp, "choices", None)
+                            if isinstance(choices, list) and choices:
+                                ch0 = choices[0]
+                                msg = getattr(ch0, "message", None)
+                                if msg is not None:
+                                    c = getattr(msg, "content", None)
+                                    if isinstance(c, str) and c:
+                                        content = c
+                                if not content and isinstance(ch0, dict):
+                                    content = ch0.get("message", {}).get("content", "") or ch0.get("text", "")
+                            if not content and isinstance(resp, dict):
+                                content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        except Exception:
+                            pass
+                    finally:
+                        if lock is not None:
+                            try:
+                                lock.release()
+                            except Exception:
+                                pass
+                finally:
+                    if sem is not None:
+                        try:
+                            sem.release()
+                        except Exception:
+                            pass
+
                 if not content:
                     return {}, sample
             except Exception:
@@ -3491,7 +3584,6 @@ class LabTableExtractor:
             return "\n".join(out)
         except Exception as e:
             return f"⚠️ debug_step8 포맷팅 중 오류: {type(e).__name__}: {e}"
-
 
     # -----------------------
     # Debug helpers (Step 9: Truncate rows)
