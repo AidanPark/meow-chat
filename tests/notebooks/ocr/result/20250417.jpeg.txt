@@ -1,0 +1,426 @@
+=== Output for 20250417.jpeg ===
+Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20250417.jpeg
+Generated on: 2025-10-24 22:39:16 (Processing time: 00:14.75)
+
+🧾 Step 12: 포함/제외 tests 전체 (라인 순)
+code      | value | value_conf | unit    | reference_min | reference_max | drop_reason              
+----------+-------+------------+---------+---------------+---------------+--------------------------
+pH        |  7.34 |     0.9982 | UNKNOWN |          7.21 |          7.41 |                          
+pCO2      |  39.2 |     0.9992 | mmHg    |          28.0 |          50.0 |                          
+pO2       |  51.0 |     0.9993 | mmHg    |          24.0 |          48.0 |                          
+Na+       | 155.0 |     0.9994 | mmol/L  |         150.0 |         165.0 |                          
+K+        |   5.1 |     0.9981 | mmol/L  |           3.5 |           5.8 |                          
+Ca        |  1.41 |     0.8869 | mg/dL   |          1.11 |          1.46 |                          
+HCT       |  27.0 |     0.9989 | %       |          32.0 |          55.0 | duplicated_code_kept_last
+PH(T)     |  7.32 |     0.9987 | UNKNOWN |          7.21 |          7.41 |                          
+PCO2(T)   |  41.9 |     0.9992 | mmHg    |          28.0 |          50.0 |                          
+HCO3      |  21.1 |     0.8739 | mmHg    |          21.0 |          28.0 |                          
+HCO3-Std  |  21.5 |     0.9992 | mmHg    |          16.0 |          28.0 |                          
+BB        |  -4.3 |     0.9967 | mmol/L  |          -2.0 |           3.0 |                          
+BE-Ecf    |  -4.7 |     0.9971 | mmol/L  |          -8.5 |          -1.5 |                          
+TCO2      |  22.3 |     0.9110 | mmol/L  |       UNKNOWN |       UNKNOWN |                          
+PO2(T)    |  71.0 |     0.9999 | mmHg    |          24.0 |          48.0 |                          
+pO2(A-a)  |  37.0 |     0.9997 | mmHg    |       UNKNOWN |       UNKNOWN |                          
+HGB       |   8.4 |     0.9980 | g/dL    |          13.5 |          17.5 | duplicated_code_kept_last
+sO2       |  91.0 |     0.9998 | %       |       UNKNOWN |       UNKNOWN |                          
+AnGap     |  18.0 |     0.9998 | mmol/L  |          13.0 |          20.0 |                          
+iCa-pH7.4 |  1.36 |     0.9987 | mmol/L  |          1.11 |          1.38 |                          
+FSAA      |   5.0 |     0.9650 | µg/mL   |           0.0 |           5.0 |                          
+RBC       |  5.52 |     0.9992 | M/µL    |          6.54 |          12.2 |                          
+HCT       |  24.4 |     0.9950 | %       |          30.3 |          52.3 |                          
+HGB       |   8.4 |     0.9937 | g/dL    |           9.8 |          16.2 |                          
+MCV       |  44.2 |     0.9991 | fL      |          35.9 |          53.1 |                          
+MCH       |  15.2 |     0.9988 | pg      |          11.8 |          17.3 |                          
+MCHC      |  34.4 |     0.9994 | g/dL    |          28.1 |          35.8 |                          
+RDW-CV    |  27.1 |     0.9248 | %       |          15.0 |          27.0 |                          
+RETIC     |   1.0 |     0.9998 | %       |       UNKNOWN |       UNKNOWN |                          
+RETIC     |  55.2 |     0.9992 | K/µL    |           3.0 |          50.0 |                          
+RETIC-HGB |  11.5 |     0.9987 | pg      |          13.2 |          20.8 |                          
+WBC       | 16.13 |     0.9997 | K/µL    |          2.87 |         17.02 |                          
+WBC-NEU   |  85.3 |     0.9992 | %       |       UNKNOWN |       UNKNOWN |                          
+WBC-LYM   |   9.5 |     0.9988 | %       |       UNKNOWN |       UNKNOWN |                          
+WBC-MONO  |   3.7 |     0.9985 | %       |       UNKNOWN |       UNKNOWN |                          
+WBC-EOS   |   1.3 |     0.9993 | %       |       UNKNOWN |       UNKNOWN |                          
+WBC-BASO  |   0.2 |     0.9993 | %       |       UNKNOWN |       UNKNOWN |                          
+WBC-NEU   | 13.76 |     0.9915 | K/µL    |           2.3 |         10.29 |                          
+WBC-LYM   |  1.54 |     0.9054 | K/µL    |          0.92 |          6.88 |                          
+WBC-MONO  |  0.59 |     0.9792 | K/µL    |          0.05 |          0.67 |                          
+WBC-EOS   |  0.21 |     0.9995 | K/µL    |          0.17 |          1.57 |                          
+WBC-BASO  |  0.03 |     0.9996 | K/µL    |          0.01 |          0.26 |                          
+PLT       |  33.0 |     0.9996 | K/µL    |         151.0 |         600.0 |                          
+MPV       |  21.0 |     0.9996 | fL      |          11.4 |          21.6 |                          
+PCT       |  0.07 |     0.9996 | %       |          0.17 |          0.86 |
+
+🧾 Step 13: 최종 테이블
+🏥 hospital_name: (None)
+👤 client_name  : (None)
+🐾 patient_name : (None)
+🗓  inspection_date: 2025-04-17
+
+🧾 Step 13: 최종 JSON
+code      | value | unit    | reference_min | reference_max
+----------+-------+---------+---------------+--------------
+pH        |  7.34 | UNKNOWN |          7.21 |          7.41
+pCO2      |  39.2 | mmHg    |          28.0 |          50.0
+pO2       |  51.0 | mmHg    |          24.0 |          48.0
+Na+       | 155.0 | mmol/L  |         150.0 |         165.0
+K+        |   5.1 | mmol/L  |           3.5 |           5.8
+Ca        |  1.41 | mg/dL   |          1.11 |          1.46
+PH(T)     |  7.32 | UNKNOWN |          7.21 |          7.41
+PCO2(T)   |  41.9 | mmHg    |          28.0 |          50.0
+HCO3      |  21.1 | mmHg    |          21.0 |          28.0
+HCO3-Std  |  21.5 | mmHg    |          16.0 |          28.0
+BB        |  -4.3 | mmol/L  |          -2.0 |           3.0
+BE-Ecf    |  -4.7 | mmol/L  |          -8.5 |          -1.5
+TCO2      |  22.3 | mmol/L  |       UNKNOWN |       UNKNOWN
+PO2(T)    |  71.0 | mmHg    |          24.0 |          48.0
+pO2(A-a)  |  37.0 | mmHg    |       UNKNOWN |       UNKNOWN
+sO2       |  91.0 | %       |       UNKNOWN |       UNKNOWN
+AnGap     |  18.0 | mmol/L  |          13.0 |          20.0
+iCa-pH7.4 |  1.36 | mmol/L  |          1.11 |          1.38
+FSAA      |   5.0 | µg/mL   |           0.0 |           5.0
+RBC       |  5.52 | M/µL    |          6.54 |          12.2
+HCT       |  24.4 | %       |          30.3 |          52.3
+HGB       |   8.4 | g/dL    |           9.8 |          16.2
+MCV       |  44.2 | fL      |          35.9 |          53.1
+MCH       |  15.2 | pg      |          11.8 |          17.3
+MCHC      |  34.4 | g/dL    |          28.1 |          35.8
+RDW-CV    |  27.1 | %       |          15.0 |          27.0
+RETIC     |   1.0 | %       |       UNKNOWN |       UNKNOWN
+RETIC     |  55.2 | K/µL    |           3.0 |          50.0
+RETIC-HGB |  11.5 | pg      |          13.2 |          20.8
+WBC       | 16.13 | K/µL    |          2.87 |         17.02
+WBC-NEU   |  85.3 | %       |       UNKNOWN |       UNKNOWN
+WBC-LYM   |   9.5 | %       |       UNKNOWN |       UNKNOWN
+WBC-MONO  |   3.7 | %       |       UNKNOWN |       UNKNOWN
+WBC-EOS   |   1.3 | %       |       UNKNOWN |       UNKNOWN
+WBC-BASO  |   0.2 | %       |       UNKNOWN |       UNKNOWN
+WBC-NEU   | 13.76 | K/µL    |           2.3 |         10.29
+WBC-LYM   |  1.54 | K/µL    |          0.92 |          6.88
+WBC-MONO  |  0.59 | K/µL    |          0.05 |          0.67
+WBC-EOS   |  0.21 | K/µL    |          0.17 |          1.57
+WBC-BASO  |  0.03 | K/µL    |          0.01 |          0.26
+PLT       |  33.0 | K/µL    |         151.0 |         600.0
+MPV       |  21.0 | fL      |          11.4 |          21.6
+PCT       |  0.07 | %       |          0.17 |          0.86
+
+📊 QA 요약:
+ - rows: 45
+ - truncated_rows: 0
+ - unit_canonical_coverage: (43, 45)
+ - result_norm_coverage: (45, 45)
+ - step12_removed_unknown: 0
+ - step12_removed_low_conf: 0
+ - step12_dedup_removed: 2
+ - step12_conf_threshold: 0.94
+
+🧾 Final JSON:
+{
+  "hospital_name": null,
+  "client_name": null,
+  "patient_name": null,
+  "inspection_date": "2025-04-17",
+  "tests": [
+    {
+      "code": "pH",
+      "unit": "UNKNOWN",
+      "reference_min": 7.21,
+      "reference_max": 7.41,
+      "value": 7.34
+    },
+    {
+      "code": "pCO2",
+      "unit": "mmHg",
+      "reference_min": 28.0,
+      "reference_max": 50.0,
+      "value": 39.2
+    },
+    {
+      "code": "pO2",
+      "unit": "mmHg",
+      "reference_min": 24.0,
+      "reference_max": 48.0,
+      "value": 51.0
+    },
+    {
+      "code": "Na+",
+      "unit": "mmol/L",
+      "reference_min": 150.0,
+      "reference_max": 165.0,
+      "value": 155.0
+    },
+    {
+      "code": "K+",
+      "unit": "mmol/L",
+      "reference_min": 3.5,
+      "reference_max": 5.8,
+      "value": 5.1
+    },
+    {
+      "code": "Ca",
+      "unit": "mg/dL",
+      "reference_min": 1.11,
+      "reference_max": 1.46,
+      "value": 1.41
+    },
+    {
+      "code": "PH(T)",
+      "unit": "UNKNOWN",
+      "reference_min": 7.21,
+      "reference_max": 7.41,
+      "value": 7.32
+    },
+    {
+      "code": "PCO2(T)",
+      "unit": "mmHg",
+      "reference_min": 28.0,
+      "reference_max": 50.0,
+      "value": 41.9
+    },
+    {
+      "code": "HCO3",
+      "unit": "mmHg",
+      "reference_min": 21.0,
+      "reference_max": 28.0,
+      "value": 21.1
+    },
+    {
+      "code": "HCO3-Std",
+      "unit": "mmHg",
+      "reference_min": 16.0,
+      "reference_max": 28.0,
+      "value": 21.5
+    },
+    {
+      "code": "BB",
+      "unit": "mmol/L",
+      "reference_min": -2.0,
+      "reference_max": 3.0,
+      "value": -4.3
+    },
+    {
+      "code": "BE-Ecf",
+      "unit": "mmol/L",
+      "reference_min": -8.5,
+      "reference_max": -1.5,
+      "value": -4.7
+    },
+    {
+      "code": "TCO2",
+      "unit": "mmol/L",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 22.3
+    },
+    {
+      "code": "PO2(T)",
+      "unit": "mmHg",
+      "reference_min": 24.0,
+      "reference_max": 48.0,
+      "value": 71.0
+    },
+    {
+      "code": "pO2(A-a)",
+      "unit": "mmHg",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 37.0
+    },
+    {
+      "code": "sO2",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 91.0
+    },
+    {
+      "code": "AnGap",
+      "unit": "mmol/L",
+      "reference_min": 13.0,
+      "reference_max": 20.0,
+      "value": 18.0
+    },
+    {
+      "code": "iCa-pH7.4",
+      "unit": "mmol/L",
+      "reference_min": 1.11,
+      "reference_max": 1.38,
+      "value": 1.36
+    },
+    {
+      "code": "FSAA",
+      "unit": "µg/mL",
+      "reference_min": 0.0,
+      "reference_max": 5.0,
+      "value": 5.0
+    },
+    {
+      "code": "RBC",
+      "unit": "M/µL",
+      "reference_min": 6.54,
+      "reference_max": 12.2,
+      "value": 5.52
+    },
+    {
+      "code": "HCT",
+      "unit": "%",
+      "reference_min": 30.3,
+      "reference_max": 52.3,
+      "value": 24.4
+    },
+    {
+      "code": "HGB",
+      "unit": "g/dL",
+      "reference_min": 9.8,
+      "reference_max": 16.2,
+      "value": 8.4
+    },
+    {
+      "code": "MCV",
+      "unit": "fL",
+      "reference_min": 35.9,
+      "reference_max": 53.1,
+      "value": 44.2
+    },
+    {
+      "code": "MCH",
+      "unit": "pg",
+      "reference_min": 11.8,
+      "reference_max": 17.3,
+      "value": 15.2
+    },
+    {
+      "code": "MCHC",
+      "unit": "g/dL",
+      "reference_min": 28.1,
+      "reference_max": 35.8,
+      "value": 34.4
+    },
+    {
+      "code": "RDW-CV",
+      "unit": "%",
+      "reference_min": 15.0,
+      "reference_max": 27.0,
+      "value": 27.1
+    },
+    {
+      "code": "RETIC",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 1.0
+    },
+    {
+      "code": "RETIC",
+      "unit": "K/µL",
+      "reference_min": 3.0,
+      "reference_max": 50.0,
+      "value": 55.2
+    },
+    {
+      "code": "RETIC-HGB",
+      "unit": "pg",
+      "reference_min": 13.2,
+      "reference_max": 20.8,
+      "value": 11.5
+    },
+    {
+      "code": "WBC",
+      "unit": "K/µL",
+      "reference_min": 2.87,
+      "reference_max": 17.02,
+      "value": 16.13
+    },
+    {
+      "code": "WBC-NEU",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 85.3
+    },
+    {
+      "code": "WBC-LYM",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 9.5
+    },
+    {
+      "code": "WBC-MONO",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 3.7
+    },
+    {
+      "code": "WBC-EOS",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 1.3
+    },
+    {
+      "code": "WBC-BASO",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 0.2
+    },
+    {
+      "code": "WBC-NEU",
+      "unit": "K/µL",
+      "reference_min": 2.3,
+      "reference_max": 10.29,
+      "value": 13.76
+    },
+    {
+      "code": "WBC-LYM",
+      "unit": "K/µL",
+      "reference_min": 0.92,
+      "reference_max": 6.88,
+      "value": 1.54
+    },
+    {
+      "code": "WBC-MONO",
+      "unit": "K/µL",
+      "reference_min": 0.05,
+      "reference_max": 0.67,
+      "value": 0.59
+    },
+    {
+      "code": "WBC-EOS",
+      "unit": "K/µL",
+      "reference_min": 0.17,
+      "reference_max": 1.57,
+      "value": 0.21
+    },
+    {
+      "code": "WBC-BASO",
+      "unit": "K/µL",
+      "reference_min": 0.01,
+      "reference_max": 0.26,
+      "value": 0.03
+    },
+    {
+      "code": "PLT",
+      "unit": "K/µL",
+      "reference_min": 151.0,
+      "reference_max": 600.0,
+      "value": 33.0
+    },
+    {
+      "code": "MPV",
+      "unit": "fL",
+      "reference_min": 11.4,
+      "reference_max": 21.6,
+      "value": 21.0
+    },
+    {
+      "code": "PCT",
+      "unit": "%",
+      "reference_min": 0.17,
+      "reference_max": 0.86,
+      "value": 0.07
+    }
+  ]
+}

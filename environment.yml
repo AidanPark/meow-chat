@@ -53,4 +53,5 @@ dependencies:
 
   # 📦 Pip 전용 패키지들 (conda에 없거나 pip이 더 나은 것들)
   - pip:
+    # Streamlit 앱 및 OpenAI SDK 등은 pip로 설치합니다.
     - -r requirements.txt

@@ -1,0 +1,245 @@
+=== Output for 20241231.png ===
+Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20241231.png
+Generated on: 2025-10-24 22:33:51 (Processing time: 00:06.19)
+
+🧾 Step 12: 포함/제외 tests 전체 (라인 순)
+code        |   value | value_conf | unit | reference_min | reference_max | drop_reason  
+------------+---------+------------+------+---------------+---------------+--------------
+RBC         |    2.61 |     0.8773 | M/µL |          6.54 |          12.2 |              
+HCT         |    12.8 |     0.9989 | %    |          30.3 |          52.3 |              
+HGB         |     4.0 |     0.9470 | g/dL |           9.8 |          16.2 |              
+MCV         |    49.0 |     0.9990 | fL   |          35.9 |          53.1 |              
+MCH         |    15.3 |     0.9992 | pg   |          11.8 |          17.3 |              
+MCHC        |    31.3 |     0.9977 | g/dL |          28.1 |          35.8 |              
+RDW         |    22.6 |     0.9985 | %    |          15.0 |          27.0 |              
+RETIC       |    12.5 |     0.9590 | K/µL |           3.0 |          50.0 |              
+WBC         |    8.83 |     0.9798 | K/µL |          2.87 |         17.02 |              
+NEUTROPHILS |   67.86 |     0.9991 | %    |       UNKNOWN |       UNKNOWN |              
+LYMPHO      |   23.63 |     0.9982 | %    |       UNKNOWN |       UNKNOWN |              
+MONO        |    3.85 |     0.9990 | %    |       UNKNOWN |       UNKNOWN |              
+EOS         |    4.67 |     0.9992 | %    |       UNKNOWN |       UNKNOWN |              
+BASO        |     0.0 |     0.9989 | %    |       UNKNOWN |       UNKNOWN |              
+NEUT        |    5.99 |     0.9502 | K/µL |          1.15 |         10.29 |              
+LYMPH       |    2.09 |     0.9502 | K/µL |          0.92 |          6.88 |              
+MONO        |    0.34 |     0.9400 | K/µL |          0.05 |          0.67 |              
+EOS         |    0.41 |     0.9838 | K/µL |          0.17 |          1.57 |              
+BASO        |     0.0 |     0.9562 | K/µL |          0.01 |          0.26 |              
+PLT         |   110.0 |     0.9505 | K/µL |         151.0 |         600.0 |              
+MPV         |    24.1 |     0.9984 | fL   |       UNKNOWN |       UNKNOWN |              
+PDW         | UNKNOWN |     1.0000 | fL   |       UNKNOWN |       UNKNOWN | unknown_value
+PCT         |    0.27 |     0.9987 | %    |       UNKNOWN |       UNKNOWN |              
+RETHGB      |    16.1 |     0.9966 | pg   |          13.2 |          20.8 |
+
+🧾 Step 13: 최종 테이블
+🏥 hospital_name: (None)
+👤 client_name  : (None)
+🐾 patient_name : (None)
+🗓  inspection_date: 2024-12-31
+
+🧾 Step 13: 최종 JSON
+code        | value | unit | reference_min | reference_max
+------------+-------+------+---------------+--------------
+RBC         |  2.61 | M/µL |          6.54 |          12.2
+HCT         |  12.8 | %    |          30.3 |          52.3
+HGB         |   4.0 | g/dL |           9.8 |          16.2
+MCV         |  49.0 | fL   |          35.9 |          53.1
+MCH         |  15.3 | pg   |          11.8 |          17.3
+MCHC        |  31.3 | g/dL |          28.1 |          35.8
+RDW         |  22.6 | %    |          15.0 |          27.0
+RETIC       |  12.5 | K/µL |           3.0 |          50.0
+WBC         |  8.83 | K/µL |          2.87 |         17.02
+NEUTROPHILS | 67.86 | %    |       UNKNOWN |       UNKNOWN
+LYMPHO      | 23.63 | %    |       UNKNOWN |       UNKNOWN
+MONO        |  3.85 | %    |       UNKNOWN |       UNKNOWN
+EOS         |  4.67 | %    |       UNKNOWN |       UNKNOWN
+BASO        |   0.0 | %    |       UNKNOWN |       UNKNOWN
+NEUT        |  5.99 | K/µL |          1.15 |         10.29
+LYMPH       |  2.09 | K/µL |          0.92 |          6.88
+MONO        |  0.34 | K/µL |          0.05 |          0.67
+EOS         |  0.41 | K/µL |          0.17 |          1.57
+BASO        |   0.0 | K/µL |          0.01 |          0.26
+PLT         | 110.0 | K/µL |         151.0 |         600.0
+MPV         |  24.1 | fL   |       UNKNOWN |       UNKNOWN
+PCT         |  0.27 | %    |       UNKNOWN |       UNKNOWN
+RETHGB      |  16.1 | pg   |          13.2 |          20.8
+
+📊 QA 요약:
+ - rows: 24
+ - truncated_rows: 0
+ - unit_canonical_coverage: (24, 24)
+ - result_norm_coverage: (23, 24)
+ - step12_removed_unknown: 1
+ - step12_removed_low_conf: 0
+ - step12_dedup_removed: 0
+ - step12_conf_threshold: 0.94
+
+🧾 Final JSON:
+{
+  "hospital_name": null,
+  "client_name": null,
+  "patient_name": null,
+  "inspection_date": "2024-12-31",
+  "tests": [
+    {
+      "code": "RBC",
+      "unit": "M/µL",
+      "reference_min": 6.54,
+      "reference_max": 12.2,
+      "value": 2.61
+    },
+    {
+      "code": "HCT",
+      "unit": "%",
+      "reference_min": 30.3,
+      "reference_max": 52.3,
+      "value": 12.8
+    },
+    {
+      "code": "HGB",
+      "unit": "g/dL",
+      "reference_min": 9.8,
+      "reference_max": 16.2,
+      "value": 4.0
+    },
+    {
+      "code": "MCV",
+      "unit": "fL",
+      "reference_min": 35.9,
+      "reference_max": 53.1,
+      "value": 49.0
+    },
+    {
+      "code": "MCH",
+      "unit": "pg",
+      "reference_min": 11.8,
+      "reference_max": 17.3,
+      "value": 15.3
+    },
+    {
+      "code": "MCHC",
+      "unit": "g/dL",
+      "reference_min": 28.1,
+      "reference_max": 35.8,
+      "value": 31.3
+    },
+    {
+      "code": "RDW",
+      "unit": "%",
+      "reference_min": 15.0,
+      "reference_max": 27.0,
+      "value": 22.6
+    },
+    {
+      "code": "RETIC",
+      "unit": "K/µL",
+      "reference_min": 3.0,
+      "reference_max": 50.0,
+      "value": 12.5
+    },
+    {
+      "code": "WBC",
+      "unit": "K/µL",
+      "reference_min": 2.87,
+      "reference_max": 17.02,
+      "value": 8.83
+    },
+    {
+      "code": "NEUTROPHILS",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 67.86
+    },
+    {
+      "code": "LYMPHO",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 23.63
+    },
+    {
+      "code": "MONO",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 3.85
+    },
+    {
+      "code": "EOS",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 4.67
+    },
+    {
+      "code": "BASO",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 0.0
+    },
+    {
+      "code": "NEUT",
+      "unit": "K/µL",
+      "reference_min": 1.15,
+      "reference_max": 10.29,
+      "value": 5.99
+    },
+    {
+      "code": "LYMPH",
+      "unit": "K/µL",
+      "reference_min": 0.92,
+      "reference_max": 6.88,
+      "value": 2.09
+    },
+    {
+      "code": "MONO",
+      "unit": "K/µL",
+      "reference_min": 0.05,
+      "reference_max": 0.67,
+      "value": 0.34
+    },
+    {
+      "code": "EOS",
+      "unit": "K/µL",
+      "reference_min": 0.17,
+      "reference_max": 1.57,
+      "value": 0.41
+    },
+    {
+      "code": "BASO",
+      "unit": "K/µL",
+      "reference_min": 0.01,
+      "reference_max": 0.26,
+      "value": 0.0
+    },
+    {
+      "code": "PLT",
+      "unit": "K/µL",
+      "reference_min": 151.0,
+      "reference_max": 600.0,
+      "value": 110.0
+    },
+    {
+      "code": "MPV",
+      "unit": "fL",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 24.1
+    },
+    {
+      "code": "PCT",
+      "unit": "%",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 0.27
+    },
+    {
+      "code": "RETHGB",
+      "unit": "pg",
+      "reference_min": 13.2,
+      "reference_max": 20.8,
+      "value": 16.1
+    }
+  ]
+}

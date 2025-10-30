@@ -1,0 +1,164 @@
+=== Output for 20250116.png ===
+Original image: /home/aidan/work/meow-chat/notebooks/ocr/assets/images/20250116.png
+Generated on: 2025-10-24 22:34:48 (Processing time: 00:13.09)
+
+🧾 Step 12: 포함/제외 tests 전체 (라인 순)
+code      |   value | value_conf | unit    | reference_min | reference_max | drop_reason  
+----------+---------+------------+---------+---------------+---------------+--------------
+GLU       |   173.0 |     0.9998 | mg/dL   |          77.0 |         153.0 |              
+CREA      |     0.4 |     0.9934 | mg/dL   |           0.6 |           1.6 |              
+BUN       |    12.0 |     0.9995 | mg/dL   |          16.0 |          33.0 |              
+BUN/CREA  |    32.0 |     0.9987 | UNKNOWN |       UNKNOWN |       UNKNOWN |              
+PHOS      |     5.1 |     0.8700 | mg/dL   |           4.5 |          10.4 |              
+Ca        |    10.4 |     0.9204 | mg/dL   |           7.9 |          11.3 |              
+TP        |     6.9 |     0.9992 | g/dL    |           5.2 |           8.2 |              
+ALB       |     3.1 |     0.7579 | g/dL    |           2.2 |           3.9 |              
+GLOB      |     3.8 |     0.8959 | g/dL    |           2.8 |           4.8 |              
+ALB/GLOB  |     0.8 |     0.9987 | UNKNOWN |       UNKNOWN |       UNKNOWN |              
+ALT       |    11.0 |     0.9995 | U/L     |          12.0 |         115.0 |              
+ALKP      |    39.0 |     0.9991 | U/L     |          14.0 |         192.0 |              
+GGT       |     0.0 |     0.9670 | U/L     |           0.0 |           1.0 |              
+BIL-Total | UNKNOWN |     0.9982 | mg/dL   |           0.0 |           0.9 | unknown_value
+CHOL      |    96.0 |     0.9992 | mg/dL   |          62.0 |         191.0 |
+
+🧾 Step 13: 최종 테이블
+🏥 hospital_name: (None)
+👤 client_name  : 하선경
+🐾 patient_name : 양희
+🗓  inspection_date: 2025-01-16
+
+🧾 Step 13: 최종 JSON
+code     | value | unit    | reference_min | reference_max
+---------+-------+---------+---------------+--------------
+GLU      | 173.0 | mg/dL   |          77.0 |         153.0
+CREA     |   0.4 | mg/dL   |           0.6 |           1.6
+BUN      |  12.0 | mg/dL   |          16.0 |          33.0
+BUN/CREA |  32.0 | UNKNOWN |       UNKNOWN |       UNKNOWN
+PHOS     |   5.1 | mg/dL   |           4.5 |          10.4
+Ca       |  10.4 | mg/dL   |           7.9 |          11.3
+TP       |   6.9 | g/dL    |           5.2 |           8.2
+ALB      |   3.1 | g/dL    |           2.2 |           3.9
+GLOB     |   3.8 | g/dL    |           2.8 |           4.8
+ALB/GLOB |   0.8 | UNKNOWN |       UNKNOWN |       UNKNOWN
+ALT      |  11.0 | U/L     |          12.0 |         115.0
+ALKP     |  39.0 | U/L     |          14.0 |         192.0
+GGT      |   0.0 | U/L     |           0.0 |           1.0
+CHOL     |  96.0 | mg/dL   |          62.0 |         191.0
+
+📊 QA 요약:
+ - rows: 15
+ - truncated_rows: 0
+ - unit_canonical_coverage: (13, 15)
+ - result_norm_coverage: (14, 15)
+ - step12_removed_unknown: 1
+ - step12_removed_low_conf: 0
+ - step12_dedup_removed: 0
+ - step12_conf_threshold: 0.94
+
+🧾 Final JSON:
+{
+  "hospital_name": null,
+  "client_name": "하선경",
+  "patient_name": "양희",
+  "inspection_date": "2025-01-16",
+  "tests": [
+    {
+      "code": "GLU",
+      "unit": "mg/dL",
+      "reference_min": 77.0,
+      "reference_max": 153.0,
+      "value": 173.0
+    },
+    {
+      "code": "CREA",
+      "unit": "mg/dL",
+      "reference_min": 0.6,
+      "reference_max": 1.6,
+      "value": 0.4
+    },
+    {
+      "code": "BUN",
+      "unit": "mg/dL",
+      "reference_min": 16.0,
+      "reference_max": 33.0,
+      "value": 12.0
+    },
+    {
+      "code": "BUN/CREA",
+      "unit": "UNKNOWN",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 32.0
+    },
+    {
+      "code": "PHOS",
+      "unit": "mg/dL",
+      "reference_min": 4.5,
+      "reference_max": 10.4,
+      "value": 5.1
+    },
+    {
+      "code": "Ca",
+      "unit": "mg/dL",
+      "reference_min": 7.9,
+      "reference_max": 11.3,
+      "value": 10.4
+    },
+    {
+      "code": "TP",
+      "unit": "g/dL",
+      "reference_min": 5.2,
+      "reference_max": 8.2,
+      "value": 6.9
+    },
+    {
+      "code": "ALB",
+      "unit": "g/dL",
+      "reference_min": 2.2,
+      "reference_max": 3.9,
+      "value": 3.1
+    },
+    {
+      "code": "GLOB",
+      "unit": "g/dL",
+      "reference_min": 2.8,
+      "reference_max": 4.8,
+      "value": 3.8
+    },
+    {
+      "code": "ALB/GLOB",
+      "unit": "UNKNOWN",
+      "reference_min": null,
+      "reference_max": null,
+      "value": 0.8
+    },
+    {
+      "code": "ALT",
+      "unit": "U/L",
+      "reference_min": 12.0,
+      "reference_max": 115.0,
+      "value": 11.0
+    },
+    {
+      "code": "ALKP",
+      "unit": "U/L",
+      "reference_min": 14.0,
+      "reference_max": 192.0,
+      "value": 39.0
+    },
+    {
+      "code": "GGT",
+      "unit": "U/L",
+      "reference_min": 0.0,
+      "reference_max": 1.0,
+      "value": 0.0
+    },
+    {
+      "code": "CHOL",
+      "unit": "mg/dL",
+      "reference_min": 62.0,
+      "reference_max": 191.0,
+      "value": 96.0
+    }
+  ]
+}

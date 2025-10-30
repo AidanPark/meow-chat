@@ -428,7 +428,7 @@ class LabTableExtractor:
         meta_dbg: Dict[str, Any] = {}
         try:
             if body_start is not None:
-                meta, meta_dbg = self._extract_metadata_above_body(lines, header_idx, body_start)
+                meta, meta_dbg = self._extract_metadata_above_body(lines, header_idx, body_start, header_roles)
                 # 문서 결과에도 채워둠 (불확실 시 None 유지)
                 doc.update({
                     k: v for k, v in meta.items() if k in ("hospital_name", "client_name", "patient_name", "inspection_date")
@@ -654,6 +654,7 @@ class LabTableExtractor:
             "client_name": "",
             "patient_name": "",
             "inspection_date": "",
+            "header_shape": "",
             "tests": [],
         }
 
@@ -671,6 +672,8 @@ class LabTableExtractor:
             out["client_name"] = _str_or_empty(final_doc.get("client_name"))
             out["patient_name"] = _str_or_empty(final_doc.get("patient_name"))
             out["inspection_date"] = _str_or_empty(final_doc.get("inspection_date"))
+            hs = final_doc.get("header_shape")
+            out["header_shape"] = _str_or_empty(hs)
 
             raw_tests = final_doc.get("tests")
             if isinstance(raw_tests, list):
@@ -1693,7 +1696,7 @@ class LabTableExtractor:
             return {}, []
 
     def _extract_metadata_above_body(
-        self, lines: Lines, header_index: Optional[int], body_start_idx: int
+        self, lines: Lines, header_index: Optional[int], body_start_idx: int, header_roles: Any | None = None
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """바디 시작 위(헤더 포함) 영역에서 병원/의뢰인/환자/검사일 메타데이터를 규칙 기반으로 추출.
 
@@ -1838,17 +1841,54 @@ class LabTableExtractor:
                 mid = len(gaps) // 2
                 return gaps[mid]
 
+        def _parse_valid_date(s: Any) -> Optional[str]:
+            """문자열이 실제 유효한 날짜인지 검사하고 YYYY-MM-DD로 정규화.
+
+            허용 포맷 예시:
+            - 2024-11-21, 2024.11.21, 2024/11/21, "2024년 11월 21일"
+            - 21-11-2024, 21/11/2024 (dmy)
+            - 24-11-21 (yy-mm-dd)
+            - 20241121 (연속 숫자)
+            - 공백 뒤 시간은 무시(예: "2024-11-21 11:40")
+            """
+            if not isinstance(s, str):
+                return None
+            t = s.strip()
+            if not t:
+                return None
+            # 한국어 오전/오후 제거
+            t = t.replace("오전", "").replace("오후", "")
+            import re as _re
+            from datetime import datetime as _dt
+
+            patterns = [
+                (_re.compile(r"(?P<year>19\d{2}|20\d{2})[.\-/\s년]\s*(?P<month>\d{1,2})[.\-/\s월]\s*(?P<day>\d{1,2})"), "ymd"),
+                (_re.compile(r"(?P<day>\d{1,2})[.\-/]\s*(?P<month>\d{1,2})[.\-/]\s*(?P<year>19\d{2}|20\d{2})"), "dmy"),
+                (_re.compile(r"(?P<year>\d{2})[.\-/]\s*(?P<month>\d{1,2})[.\-/]\s*(?P<day>\d{1,2})"), "ymd2"),
+                (_re.compile(r"(?<!\d)(?P<year>19\d{2}|20\d{2})(?P<month>\d{2})(?P<day>\d{2})(?!\d)"), "ymd"),
+            ]
+
+            for rx, kind in patterns:
+                m = rx.search(t)
+                if not m:
+                    continue
+                try:
+                    y = int(m.group("year"))
+                    if kind == "ymd2":
+                        y = 1900 + y if y >= 70 else 2000 + y
+                    mo = int(m.group("month"))
+                    d = int(m.group("day"))
+                    _dt(y, mo, d)
+                    return f"{y:04d}-{mo:02d}-{d:02d}"
+                except Exception:
+                    continue
+            return None
+
         def _is_date_like(s: str) -> bool:
             try:
-                for pat in date_patterns:
-                    if re.search(pat, s):
-                        return True
+                return _parse_valid_date(s) is not None
             except Exception:
-                pass
-            # 숫자만 6자리 이상 (예: 20240111 등)도 날짜/ID 유사 취급
-            if re.fullmatch(r"\d{6,}", s):
-                return True
-            return False
+                return False
 
         def _prune_trailing_id_or_date(val: str) -> str:
             """추출된 이름 문자열에서 뒤쪽의 ID/날짜 유사 토큰을 제거."""
@@ -2122,13 +2162,18 @@ class LabTableExtractor:
                     except re.error:
                         continue
                     if m:
-                        val = norm(m.group(0))
-                        # 너무 짧은 2자리 년도는 가점 낮게
-                        y4 = bool(re.match(r"^\d{4}[-./]\d{1,2}[-./]\d{1,2}$", val))
+                        raw_val = norm(m.group(0))
+                        norm_date = _parse_valid_date(raw_val)
+                        if not norm_date:
+                            # 패턴은 맞았지만 실제 달력 날짜가 아니면 건너뜀
+                            continue
+                        # 너무 짧은 2자리 년도는 가점 낮게(정규화는 YYYY)
+                        y4 = True  # norm_date는 YYYY-MM-DD
                         score = ds + (1.5 if y4 else 0.7)
                         candidates["inspection_date"].append({
                             "label": "date-pattern",
-                            "value": val,
+                            "value": norm_date,
+                            "value_raw": raw_val,
                             "score": score,
                             "line_index": i,
                         })
@@ -2154,11 +2199,43 @@ class LabTableExtractor:
             best = max(items, key=key_fn)
             return norm(str(best.get("value", ""))) or None
 
+        # 최종 선택(inspection_date는 이미 정규화된 후보만 존재)
+        # 헤더 형상(header_shape) 계산: name/unit/result/reference|min|max 순서를 col_index 기준으로 문자열화
+        header_shape: Optional[str] = None
+        try:
+            roles_map = self._roles_to_mapping(header_roles) if header_roles is not None else {}
+            if isinstance(roles_map, dict) and roles_map:
+                def _ci(role: str) -> int:
+                    try:
+                        info = roles_map.get(role) or {}
+                        ci = info.get("col_index")
+                        if isinstance(ci, int):
+                            return ci
+                        if isinstance(ci, list) and ci:
+                            # 여러 후보가 있으면 가장 왼쪽(최소) 사용
+                            nums = [int(x) for x in ci if isinstance(x, int)]
+                            return min(nums) if nums else 9999
+                        # 백업 키
+                        b = info.get("index")
+                        return int(b) if isinstance(b, int) else 9999
+                    except Exception:
+                        return 9999
+
+                present = [r for r in ["name", "unit", "reference", "min", "max", "result"] if roles_map.get(r)]
+                # reference vs (min,max) 충돌 시 min/max 우선, reference 제거
+                if ("min" in present or "max" in present) and "reference" in present:
+                    present = [r for r in present if r != "reference"]
+                present.sort(key=_ci)
+                header_shape = "-".join(present) if present else None
+        except Exception:
+            header_shape = None
+
         meta: Dict[str, Any] = {
             "hospital_name": pick_best("hospital_name"),
             "client_name": pick_best("client_name"),
             "patient_name": pick_best("patient_name"),
             "inspection_date": pick_best("inspection_date"),
+            "header_shape": header_shape,
         }
 
         debug = {
@@ -2166,6 +2243,7 @@ class LabTableExtractor:
             "scanned_count": len(region),
             "header_index": header_index,
             "end_index": end_idx,
+            "header_shape": header_shape,
         }
         return meta, debug
 
@@ -2700,12 +2778,13 @@ class LabTableExtractor:
 
     def _to_final_json(self, meta: Dict[str, Any], rows: List[Dict[str, Any]]) -> DocumentResult:
         """중간 행 리스트를 최종 DocumentResult 스키마로 정규화."""
-        # 메타 병합
+        # 메타 병합 
         doc: DocumentResult = {
             "hospital_name": meta.get("hospital_name"),
             "client_name": meta.get("client_name"),
             "patient_name": meta.get("patient_name"),
             "inspection_date": meta.get("inspection_date"),
+            "header_shape": meta.get("header_shape"),
             "tests": [],
         }
 
