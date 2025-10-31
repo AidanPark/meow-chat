@@ -13,32 +13,61 @@ pkill -f "ocr_api_server.py"
 
 sleep 2
 
-# conda 환경 활성화 체크
-if [[ "$CONDA_DEFAULT_ENV" != "meow-chat" ]]; then
-    echo "⚠️  meow-chat conda 환경을 먼저 활성화해주세요:"
-    echo "conda activate meow-chat"
-    exit 1
+# 실행 환경 체크(선택): 로컬에선 conda 권장, 컨테이너/CI에선 건너뜀
+if [[ -z "$CI" && -z "$DOCKER" ]]; then
+    if [[ "$CONDA_DEFAULT_ENV" != "meow-chat" ]]; then
+            echo "ℹ️ conda 환경(meow-chat)이 활성화되어 있지 않습니다. 로컬 환경이라면 'conda activate meow-chat' 후 실행을 권장합니다."
+    fi
 fi
 
+# 스크립트 기준 경로 설정
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# .env 자동 로드 (루트/백엔드/현재 디렉토리 우선순위)
+load_env_file() {
+    local f="$1"
+    if [[ -f "$f" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        . "$f"
+        set +a
+        echo "📦 .env 로드: $f"
+    fi
+}
+
+load_env_file "$SCRIPT_DIR/../../.env"
+load_env_file "$SCRIPT_DIR/../.env"
+load_env_file "$SCRIPT_DIR/.env"
+
+# 설정(환경변수)에서 호스트/포트 읽기
+MATH_HOST="${MCP_MATH_UTILITY_HOST:-${MCP_HOST:-127.0.0.1}}"
+MATH_PORT="${MCP_MATH_UTILITY_PORT:-${MCP_PORT:-8000}}"
+WEATHER_HOST="${MCP_WEATHER_API_HOST:-${MCP_HOST:-127.0.0.1}}"
+WEATHER_PORT="${MCP_WEATHER_API_PORT:-${MCP_PORT:-8001}}"
+HEALTH_HOST="${MCP_CAT_HEALTH_HOST:-${MCP_HOST:-127.0.0.1}}"
+HEALTH_PORT="${MCP_CAT_HEALTH_PORT:-${MCP_PORT:-8002}}"
+OCR_HOST="${MCP_OCR_API_HOST:-${MCP_HOST:-127.0.0.1}}"
+OCR_PORT="${MCP_OCR_API_PORT:-${MCP_PORT:-8003}}"
+
 # 각 서버를 백그라운드에서 실행
-echo "1️⃣ Math & Utility Server 시작 (포트 8000)..."
-cd /home/aidan/work/meow-chat/mcp_servers/utility
+echo "1️⃣ Math & Utility Server 시작 (${MATH_HOST}:${MATH_PORT})..."
+cd "$SCRIPT_DIR/utility"
 python math_utility_server.py &
 MATH_PID=$!
 
-echo "2️⃣ Weather & API Server 시작 (포트 8001)..."
-cd /home/aidan/work/meow-chat/mcp_servers/weather
+echo "2️⃣ Weather & API Server 시작 (${WEATHER_HOST}:${WEATHER_PORT})..."
+cd "$SCRIPT_DIR/weather"
 python weather_api_server.py &
 WEATHER_PID=$!
 
-echo "3️⃣ Cat Health Server 시작 (포트 8002)..."
-cd /home/aidan/work/meow-chat/mcp_servers/health
+echo "3️⃣ Cat Health Server 시작 (${HEALTH_HOST}:${HEALTH_PORT})..."
+cd "$SCRIPT_DIR/health"
 python cat_health_server.py &
 HEALTH_PID=$!
 
 # OCR API Server
-echo "4️⃣ OCR API Server 시작 (포트 8003)..."
-cd /home/aidan/work/meow-chat/mcp_servers/ocr
+echo "4️⃣ OCR API Server 시작 (${OCR_HOST}:${OCR_PORT})..."
+cd "$SCRIPT_DIR/ocr"
 python ocr_api_server.py &
 OCR_PID=$!
 
@@ -49,43 +78,43 @@ sleep 5
 # 서버 상태 확인
 echo "🔍 서버 상태 확인 중..."
 
-if curl -s http://localhost:8000/health > /dev/null 2>&1; then
-    echo "✅ Math & Utility Server (8000) - 정상"
+if curl -s http://${MATH_HOST}:${MATH_PORT}/health > /dev/null 2>&1; then
+    echo "✅ Math & Utility Server (${MATH_HOST}:${MATH_PORT}) - 정상"
 else
-    echo "❌ Math & Utility Server (8000) - 오류"
+    echo "❌ Math & Utility Server (${MATH_HOST}:${MATH_PORT}) - 오류"
 fi
 
-if curl -s http://localhost:8001/health > /dev/null 2>&1; then
-    echo "✅ Weather & API Server (8001) - 정상"
+if curl -s http://${WEATHER_HOST}:${WEATHER_PORT}/health > /dev/null 2>&1; then
+    echo "✅ Weather & API Server (${WEATHER_HOST}:${WEATHER_PORT}) - 정상"
 else
-    echo "❌ Weather & API Server (8001) - 오류"
+    echo "❌ Weather & API Server (${WEATHER_HOST}:${WEATHER_PORT}) - 오류"
 fi
 
-if curl -s http://localhost:8002/health > /dev/null 2>&1; then
-    echo "✅ Cat Health Server (8002) - 정상"
+if curl -s http://${HEALTH_HOST}:${HEALTH_PORT}/health > /dev/null 2>&1; then
+    echo "✅ Cat Health Server (${HEALTH_HOST}:${HEALTH_PORT}) - 정상"
 else
-    echo "❌ Cat Health Server (8002) - 오류"
+    echo "❌ Cat Health Server (${HEALTH_HOST}:${HEALTH_PORT}) - 오류"
 fi
 
-if curl -s http://localhost:8003/health > /dev/null 2>&1; then
-    echo "✅ OCR API Server (8003) - 정상"
+if curl -s http://${OCR_HOST}:${OCR_PORT}/health > /dev/null 2>&1; then
+    echo "✅ OCR API Server (${OCR_HOST}:${OCR_PORT}) - 정상"
 else
-    echo "❌ OCR API Server (8003) - 오류"
+    echo "❌ OCR API Server (${OCR_HOST}:${OCR_PORT}) - 오류"
 fi
 
 echo ""
 echo "🎉 Multi-MCP Server 시스템이 실행되었습니다!"
 echo ""
 echo "📊 서버 정보:"
-echo "   🧮 Math & Utility: http://localhost:8000"
-echo "   🌤️ Weather & API:   http://localhost:8001"
-echo "   🐱 Cat Health:      http://localhost:8002"
-echo "   🖼️ OCR API:         http://localhost:8003"
+echo "   🧮 Math & Utility: http://${MATH_HOST}:${MATH_PORT}"
+echo "   🌤️ Weather & API:   http://${WEATHER_HOST}:${WEATHER_PORT}"
+echo "   🐱 Cat Health:      http://${HEALTH_HOST}:${HEALTH_PORT}"
+echo "   🖼️ OCR API:         http://${OCR_HOST}:${OCR_PORT}"
 echo ""
 echo "🚀 클라이언트 실행 방법:"
 echo "   streamlit run frontend/app.py"
 echo "   # 또는 다음과 같이 실행할 수 있습니다:"
-echo "   cd /home/aidan/work/meow-chat/frontend && streamlit run app.py"
+echo "   cd $(cd "$SCRIPT_DIR/../../frontend" && pwd) && streamlit run app.py"
 echo ""
 echo "🛑 서버 종료 방법:"
 echo "   bash stop_servers.sh"

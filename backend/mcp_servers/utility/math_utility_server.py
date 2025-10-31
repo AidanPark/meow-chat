@@ -10,7 +10,7 @@ from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
-from starlette.routing import Route, Mount
+from starlette.routing import Route
 import uvicorn
 
 # Bootstrap sys.path so that `mcp_servers` package can be imported when running from subfolders
@@ -18,7 +18,7 @@ _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from mcp_servers.common.runtime import setup_logging
+from mcp_servers.common.runtime import setup_logging, load_mcp_server_settings
 
 
 setup_logging()
@@ -26,9 +26,10 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("MathUtilityServer")
 
-# 네트워크 설정: 포트 충돌 방지를 위해 명시적으로 설정
-mcp.settings.host = "127.0.0.1"
-mcp.settings.port = 8000
+# 네트워크 설정: 외부 설정/환경변수에서 로드 (기본값: 127.0.0.1:8000)
+_host, _port = load_mcp_server_settings("math_utility", default_port=8000)
+mcp.settings.host = _host
+mcp.settings.port = _port
 
 # 수학 도구들
 @mcp.tool()
@@ -106,16 +107,20 @@ def calculate_percentage(part: float, total: float) -> float:
 if __name__ == "__main__":
     logger.info("🚀 수학 & 유틸리티 MCP 서버 시작 중...")
     logger.info("📋 등록된 도구들: add, multiply, subtract, divide, convert_units, calculate_percentage")
-    logger.info("🌐 서버 주소: http://127.0.0.1:8000 (SSE: /sse, Health: /health)")
+    logger.info(f"🌐 서버 주소: http://{mcp.settings.host or '127.0.0.1'}:{mcp.settings.port or 8000} (SSE: /sse, Health: /health)")
 
     async def health(_request):
         return JSONResponse({"status": "ok", "server": "MathUtilityServer"})
 
+    sse_app = mcp.sse_app()
+    routes = [
+        Route("/health", endpoint=health),
+        *sse_app.routes,
+    ]
+
     app = Starlette(
-        routes=[
-            Route("/health", endpoint=health),
-            Mount("/sse", app=mcp.sse_app()),
-        ]
+        routes=routes,
+        middleware=sse_app.user_middleware,
     )
 
     uvicorn.run(app, host=mcp.settings.host or "127.0.0.1", port=mcp.settings.port or 8000)

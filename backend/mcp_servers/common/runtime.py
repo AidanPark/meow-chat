@@ -10,7 +10,7 @@ import os
 import sys
 import logging
 import logging.config
-from typing import Optional
+from typing import Optional, Tuple, Any, Dict
 
 try:
     from ruamel.yaml import YAML  # type: ignore
@@ -55,3 +55,66 @@ def ensure_project_root_on_sys_path() -> None:
     project_root = get_project_root()
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
+
+
+def _load_yaml(path: str) -> Dict[str, Any]:
+    """YAML 파일을 안전하게 로드합니다. 실패 시 빈 dict 반환."""
+    try:
+        if YAML is None:
+            return {}
+        if not os.path.exists(path):
+            return {}
+        yaml = YAML(typ="safe")
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def load_mcp_server_settings(server_key: str, default_port: int, default_host: str = "127.0.0.1") -> Tuple[str, int]:
+    """MCP 서버의 호스트/포트를 환경변수 또는 설정 파일에서 로드합니다.
+
+    우선순위(높음 → 낮음):
+    1) 환경변수: MCP_{SERVER}_HOST, MCP_{SERVER}_PORT
+    2) 환경변수: MCP_HOST, MCP_PORT (공통 기본값)
+    3) 설정 파일: config/mcp_runtime.yml 의 mcp.defaults 및 mcp.servers.{server_key}
+    4) 함수 인자의 기본값(default_host, default_port)
+
+    Args:
+        server_key: 서버 식별자(e.g., 'math_utility', 'weather_api', 'cat_health', 'ocr_api')
+        default_port: 포트 기본값
+        default_host: 호스트 기본값
+
+    Returns:
+        (host, port)
+    """
+    project_root = get_project_root()
+    cfg_path = os.path.join(project_root, "config", "mcp_runtime.yml")
+    data = _load_yaml(cfg_path)
+
+    # 파일 값 불러오기
+    file_defaults = (data.get("mcp", {}) or {}).get("defaults", {}) if isinstance(data, dict) else {}
+    file_servers = (data.get("mcp", {}) or {}).get("servers", {}) if isinstance(data, dict) else {}
+    file_host = None
+    file_port = None
+    if isinstance(file_defaults, dict):
+        file_host = file_defaults.get("host")
+        file_port = file_defaults.get("port")
+    if isinstance(file_servers, dict) and isinstance(file_servers.get(server_key), dict):
+        sk = file_servers[server_key]
+        file_host = sk.get("host", file_host)
+        file_port = sk.get("port", file_port)
+
+    # 환경변수 우선
+    key_upper = server_key.upper().replace("-", "_")
+    env_host = os.getenv(f"MCP_{key_upper}_HOST") or os.getenv("MCP_HOST")
+    env_port = os.getenv(f"MCP_{key_upper}_PORT") or os.getenv("MCP_PORT")
+
+    host = env_host or file_host or default_host
+    try:
+        port = int(env_port) if env_port is not None else int(file_port) if file_port is not None else int(default_port)
+    except Exception:
+        port = int(default_port)
+
+    return host, port
