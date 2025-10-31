@@ -22,5 +22,6 @@ echo "🚀 Jupyter Lab을 시작합니다..."
 echo "   (GLIBCXX_3.4.31 문제가 해결된 상태로 실행됩니다)"
 echo ""
 
-# Jupyter Lab 시작
+# 스크립트 위치(backend 디렉토리)로 이동 후 Jupyter Lab 시작
+cd "$(dirname "$0")"
 jupyter lab

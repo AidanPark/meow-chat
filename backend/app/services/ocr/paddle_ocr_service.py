@@ -1,3 +1,4 @@
+from app.models.envelopes import OCRResultEnvelope
 import cv2
 import numpy as np
 import re
@@ -646,7 +647,7 @@ class PaddleOCRService:
         
         return preprocessing_settings
 
-    def run_ocr_from_path(self, file_path: str):
+    def run_ocr_from_path(self, file_path: str) -> OCRResultEnvelope | None:
         """
         파일 경로에서 OCR을 실행하고 표준 dict(envelope) 결과를 반환합니다.
 
@@ -663,7 +664,7 @@ class PaddleOCRService:
         """
         try:
             # PaddleOCR 원본 결과 반환 (동시성 보호)
-            from app.models.envelopes import OCRData, OCRMeta, OCRResultEnvelope
+            from app.models.envelopes import OCRData, OCRMeta
             result = self._predict_guarded(file_path)
             items = result if isinstance(result, list) else []
             env = OCRResultEnvelope(
@@ -677,7 +678,7 @@ class PaddleOCRService:
             print(f"❌ 파일 OCR 실패: {e}")
             return None
     
-    def run_ocr_from_nparray(self, image_array: np.ndarray):
+    def run_ocr_from_nparray(self, image_array: np.ndarray) -> OCRResultEnvelope | None:
         """
         numpy 배열에서 OCR을 실행하고 표준 dict(envelope) 결과를 반환합니다.
 
@@ -708,7 +709,7 @@ class PaddleOCRService:
             print(f"❌ 배열 OCR 실패: {e}")
             return None
     
-    def run_ocr_from_bytes(self, image_bytes: bytes):
+    def run_ocr_from_bytes(self, image_bytes: bytes) -> OCRResultEnvelope | None:
         """
         바이트 데이터에서 OCR을 실행하고 표준 dict(envelope) 결과를 반환합니다.
 

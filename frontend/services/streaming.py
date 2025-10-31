@@ -6,8 +6,9 @@ from queue import Queue, Empty
 import time
 from typing import Dict, Any, Generator, List, Set
 
-from langgraph.prebuilt import create_react_agent
 from langchain_core.callbacks import BaseCallbackHandler
+from services import langgraph_compat  # noqa: F401  # ensure compatibility patch runs
+from langgraph.prebuilt import create_react_agent_executor
 
 
 class UIStreamingCallbackHandler(BaseCallbackHandler):
@@ -61,13 +62,18 @@ def stream_agent_generator(
     handler = UIStreamingCallbackHandler(token_queue, done, rec)
 
     async def _run_async():
-        tools = await client.get_tools()
-        agent = create_react_agent(model, tools)
         try:
+            tools = await client.get_tools()
+            agent = create_react_agent_executor(model, tools)
             result = await agent.ainvoke({"messages": lc_messages}, config={"callbacks": [handler]})
             final_text = None
-            if isinstance(result, dict) and result.get("messages"):
-                final = result["messages"][-1]
+            messages = None
+            if isinstance(result, dict):
+                messages = result.get("messages") or result.get("outputs")
+            elif isinstance(result, list):
+                messages = result
+            if messages:
+                final = messages[-1]
                 final_text = getattr(final, "content", None) or str(final)
             rec["final_text"] = final_text
         except Exception as e:

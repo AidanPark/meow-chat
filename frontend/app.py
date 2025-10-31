@@ -10,12 +10,12 @@ import sys
 import asyncio
 import time
 from datetime import datetime
+import io
 import streamlit as st
 
 # LangChain MCP Adapters
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
-from langchain_openai import ChatOpenAI
+
 
 from dotenv import load_dotenv, find_dotenv
 from ruamel.yaml import YAML
@@ -96,6 +96,33 @@ def get_model_and_client():
     if not os.getenv("OPENAI_API_KEY"):
         st.error("OPENAI_API_KEY가 설정되지 않았습니다. .env 또는 환경변수를 확인해주세요.")
         st.stop()
+    # Lazy import with diagnostics to avoid hard crashes from version mismatches
+    try:
+        from langchain_openai import ChatOpenAI  # type: ignore
+    except Exception as e:
+        import importlib.metadata as _md
+        def _ver(pkg: str) -> str:
+            try:
+                return _md.version(pkg)
+            except Exception:
+                return "not-installed"
+
+        lc = _ver("langchain")
+        lcc = _ver("langchain-core")
+        lco = _ver("langchain-openai")
+        lg = _ver("langgraph")
+        st.error(
+            "LangChain/OpenAI 모듈 임포트 오류로 앱을 시작할 수 없습니다.\n\n"
+            "원인: 설치된 패키지 버전 불일치 가능성이 큽니다.\n\n"
+            f"설치된 버전:\n- langchain={lc}\n- langchain-core={lcc}\n- langchain-openai={lco}\n- langgraph={lg}\n\n"
+            "권장 해결책:\n"
+            "- 프로젝트의 고정 버전을 맞추세요 (backend/requirements.txt 참고).\n"
+            "- 최소 조합 예시: langchain==1.0.3, langchain-openai==1.0.1, langgraph==1.0.2\n"
+            "- 또는 모든 관련 패키지 최신 버전으로 동기 업그레이드\n"
+            "\n자세한 오류: " + str(e)
+        )
+        st.stop()
+
     model = ChatOpenAI(model="gpt-4.1-mini", streaming=True)
     client = MultiServerMCPClient(SERVERS)  # type: ignore[arg-type]
     return model, client
@@ -138,6 +165,35 @@ with st.sidebar:
         st.session_state.previous_uploaded_count = 0
         st.session_state._prev_active_profile = st.session_state.active_profile
         st.info(f"프로필 전환: '{st.session_state.active_profile}' (대화 상태 초기화)")
+
+    st.divider()
+
+    st.subheader("📎 이미지 업로드")
+    uploaded_files = st.file_uploader(
+        "대화에 첨부할 이미지",
+        type=["png", "jpg", "jpeg", "gif", "webp"],
+        accept_multiple_files=True,
+        key="sidebar_image_uploader",
+    )
+    if uploaded_files:
+        previous_names = [getattr(img, "name", "") for img in st.session_state.uploaded_images]
+        stored: list[io.BytesIO] = []
+        current_names: list[str] = []
+        for file in uploaded_files:
+            data = file.getvalue()
+            buf = io.BytesIO(data)
+            buf.name = file.name  # type: ignore[attr-defined]
+            stored.append(buf)
+            current_names.append(file.name)
+        st.session_state.uploaded_images = stored
+        st.session_state.previous_uploaded_count = len(stored)
+        # No additional notification; chat input 이미 첨부 개수를 표시합니다.
+    else:
+        if st.session_state.uploaded_images:
+            st.session_state.uploaded_images = []
+            st.session_state.previous_uploaded_count = 0
+
+    # 첨부 초기화 버튼은 제거함 (사용자는 새로 업로드하거나 새 프로필/세션으로 리셋 가능)
 
     st.divider()
 

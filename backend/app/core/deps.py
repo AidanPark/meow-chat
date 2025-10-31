@@ -1,12 +1,21 @@
 """
-FastAPI dependency providers for configuration and core services.
+프로젝트 핵심 서비스/설정 DI(Dependency Injection) 공급자 모듈
 
-- get_config(): AppConfig loaded from environment, cached
-- get_ocr_service(): Singleton PaddleOCRService configured from env
-- get_extractor(): Factory for LabTableExtractor with env-based settings
-- get_image_preprocessor(): Singleton ImagePreprocessor with sane defaults
-- get_line_preprocessor(): Singleton LinePreprocessor with sane defaults
-- get_pipeline_manager(): Factory for OCRPipelineManager wired with DI
+주요 역할:
+- OCR, 이미지/라인 전처리, 추출기, 파이프라인 매니저 등 주요 컴포넌트의 인스턴스를 중앙에서 관리/제공합니다.
+- 환경설정(AppConfig)을 기반으로 각 서비스의 옵션을 자동으로 반영합니다.
+- 대부분의 서비스는 @lru_cache로 싱글톤(프로세스 내 1회 생성)으로 관리되어 성능과 일관성을 보장합니다.
+- 추출기/파이프라인 매니저 등은 요청마다 새 인스턴스를 생성할 수 있도록 팩토리 함수로 제공합니다.
+- clear_cached_providers() 함수로, 캐시된 싱글톤 인스턴스를 모두 초기화하여 환경변수 변경에도 즉시 반영할 수 있습니다.
+
+주요 기능:
+- get_config(): 환경변수 기반 앱 설정(AppConfig) 싱글톤 제공
+- get_image_preprocessor(): 이미지 전처리기 싱글톤 제공
+- get_ocr_service(): PaddleOCR 서비스 싱글톤 제공
+- get_line_preprocessor(): 라인 전처리기 싱글톤 제공
+- get_extractor(): LabTableExtractor 추출기 팩토리(설정 반영)
+- get_pipeline_manager(): OCRPipelineManager 팩토리(중앙 DI로 연결)
+- clear_cached_providers(): 모든 싱글톤 캐시 초기화(환경변수 변경 반영)
 """
 from __future__ import annotations
 
@@ -25,14 +34,19 @@ from app.services.analysis.ocr_pipeline_manager import OCRPipelineManager
 # Config provider
 @lru_cache(maxsize=1)
 def get_config() -> AppConfig:
+    """
+    환경변수 기반 앱 설정(AppConfig) 싱글톤 반환
+    """
     return load_config_from_env()
 
 # Image preprocessor provider (singleton)
 @lru_cache(maxsize=1)
 def get_image_preprocessor() -> ImagePreprocessor:
-    _cfg = get_config()  # reserved for future env-driven mapping
+    """
+    이미지 전처리기 싱글톤 반환 (기본 설정 적용)
+    """
+    _cfg = get_config()  # 향후 환경변수 기반 설정 확장 가능
     settings = ImageSettings(
-        # long_edge_min=1920,
         long_edge_min=0,
         enable_flatten_transparency=True,
         enable_normalize_mode=True,
@@ -45,6 +59,9 @@ def get_image_preprocessor() -> ImagePreprocessor:
 # OCR service provider (singleton)
 @lru_cache(maxsize=1)
 def get_ocr_service() -> PaddleOCRService:
+    """
+    환경설정 기반 PaddleOCR 서비스 싱글톤 반환
+    """
     cfg = get_config()
     svc = PaddleOCRService(
         lang=cfg.ocr_lang,
@@ -58,23 +75,26 @@ def get_ocr_service() -> PaddleOCRService:
 # Line preprocessor provider (singleton)
 @lru_cache(maxsize=1)
 def get_line_preprocessor() -> LinePreprocessor:
-    _cfg = get_config()  # reserved for future env-driven mapping
+    """
+    라인 전처리기 싱글톤 반환 (기본 설정 적용)
+    """
+    _cfg = get_config()  # 향후 환경변수 기반 설정 확장 가능
     settings = LineSettings(order="x_left", alpha=0.7, debug=True)
     return LinePreprocessor(settings=settings)
 
 # Extractor provider (factory: allow different settings per request if needed)
 def get_extractor() -> LabTableExtractor:
+    """
+    환경설정 기반 LabTableExtractor 추출기 인스턴스 반환 (팩토리)
+    """
     cfg = get_config()
-    # Map env-driven settings into the extractor's Settings dataclass
     s = ExtractorSettings(
         use_llm=cfg.llm_use,
-        # Concurrency knobs
         enable_llm_lock=cfg.llm_enable_lock,
         llm_max_concurrency=cfg.llm_max_concurrency,
     )
     extractor = LabTableExtractor(
         settings=s,
-        # Provide default lexicon/resolver; callers can override per-call if needed
         lexicon=get_code_lexicon(),
         resolver=resolve_code,
         api_key=cfg.openai_api_key,
@@ -84,11 +104,9 @@ def get_extractor() -> LabTableExtractor:
 
 # OCR pipeline manager provider (factory)
 def get_pipeline_manager(*, do_preprocess_default: bool = True, progress_cb=None) -> OCRPipelineManager:
-    """Create an OCRPipelineManager wired up with centralized DI providers.
-
-    Notes:
-    - Factory (not cached): caller may want different progress callbacks.
-    - Uses singleton preprocessor/ocr/line_preproc and fresh extractor per call.
+    """
+    OCRPipelineManager 인스턴스 반환 (DI로 각 컴포넌트 연결, progress 콜백 등 옵션 지원)
+    - 싱글톤 기반 컴포넌트와 새 추출기를 조합해 반환
     """
     return OCRPipelineManager(
         preprocessor=get_image_preprocessor(),
@@ -100,9 +118,8 @@ def get_pipeline_manager(*, do_preprocess_default: bool = True, progress_cb=None
     )
 
 def clear_cached_providers() -> None:
-    """Clear lru_cache for cached providers to reflect environment changes.
-
-    Useful in notebooks or scripts that modify os.environ without restarting the process.
+    """
+    모든 싱글톤 캐시를 초기화하여 환경변수 변경을 즉시 반영 (노트북/스크립트에서 유용)
     """
     try:
         get_config.cache_clear()

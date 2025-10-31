@@ -1,8 +1,15 @@
 """
-App configuration via environment variables.
+프로젝트 환경설정 관리 모듈
 
-Lightweight loader without external dependencies (avoids pydantic-settings).
-Provide strongly-typed accessors and safe parsing with defaults.
+주요 역할:
+- 환경변수 기반으로 OCR, LLM, API 키 등 주요 설정을 안전하게 불러와서 AppConfig 객체로 제공합니다.
+- 외부 라이브러리 없이, 파이썬 표준 라이브러리만으로 타입 안전하게 파싱 및 기본값 적용을 구현합니다.
+- @dataclass로 각 설정의 타입을 명확히 지정하고, @lru_cache로 1회만 읽어와 재사용합니다.
+
+주요 기능:
+- 환경변수에서 값을 읽어와 OCR/LLM/OpenAI API 키 등 다양한 옵션을 자동 파싱합니다.
+- 불리언/정수/문자열 등 다양한 타입을 안전하게 변환하며, 값이 없거나 잘못된 경우에는 기본값을 사용합니다.
+- 여러 서비스/모듈에서 load_config_from_env()를 통해 설정을 쉽게 불러올 수 있습니다.
 """
 from __future__ import annotations
 

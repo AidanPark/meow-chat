@@ -33,17 +33,17 @@ aistudio-sdk>=0.3.0
 onnxruntime>=1.16.3
 
 # 🤖 LLM 클라이언트 (OpenAI)
-# 고정 버전으로 의존성 백트래킹 지연 방지
+# - langchain-openai 1.0.1 과 호환되는 2.x 계열 고정
 openai==2.6.1
 
-# 🤖 OpenAI Agents SDK
-openai-agents==0.4.2
-
-# 🤖 LangChain MCP 통합 (백트래킹 방지를 위해 고정)
+# 🤖 LangChain MCP 통합 (서로 호환되는 고정 버전)
+# - LangGraph 1.0.2 + LangChain Core 1.0.x 조합 (create_react_agent_executor)
+# - langgraph_compat 패치를 통해 _DirectlyInjectedToolArg 호환 처리
 langchain==1.0.3
 langchain-community==0.4.1
 langchain-openai==1.0.1
 langchain-mcp-adapters==0.1.11
+langchain-core==1.0.1
 langgraph==1.0.2
 
 # 🧩 Model Context Protocol 서버/클라이언트

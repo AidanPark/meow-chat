@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.models.envelopes import Envelope, ExtractionMeta, MergeEnvelope
 
 from typing import Any, Callable, Dict, List, Optional
 import json
@@ -271,7 +272,7 @@ class OCRPipelineManager:
         )
 
     # ---------- 2) OCR 결과 -> 추출 dict ----------
-    def ocr_to_extraction(self, ocr_result: Any, *, progress_cb: ProgressCB = None) -> Any:
+    def ocr_to_extraction(self, ocr_result: Any, *, progress_cb: ProgressCB = None) -> Envelope[Dict[str, Any], ExtractionMeta]:
         from app.models.envelopes import Envelope, ExtractionMeta
         # 모델만 허용, 아니면 빈 모델 반환
         if not (hasattr(ocr_result, 'data') and hasattr(ocr_result, 'meta')):
@@ -407,7 +408,7 @@ class OCRPipelineManager:
             out.append(t)
         return out
 
-    def merge_extractions(self, results: List[Dict[str, Any]], *, progress_cb: ProgressCB = None) -> Any:
+    def merge_extractions(self, results: List[Dict[str, Any]], *, progress_cb: ProgressCB = None) -> MergeEnvelope:
         self._emit({'stage': 'merge', 'status': 'start', 'ts': self._ts(), 'count': len(results)}, progress_cb)
         _filtered = [r for r in results if not self._is_empty_tests(r)]
         pruned = len(results) - len(_filtered)
@@ -498,7 +499,7 @@ class OCRPipelineManager:
         yield evt
 
 
-def create_default_manager(
+def create_default_ocr_pipeline_manager(
     *,
     lang: str = "korean",
     ip_settings: Optional[dict] = None,
