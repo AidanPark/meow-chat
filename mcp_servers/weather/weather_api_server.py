@@ -4,38 +4,25 @@
 """
 
 import os
+import sys
 import logging
-import logging.config
 import asyncio
 import random
-from ruamel.yaml import YAML
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, Mount
 import uvicorn
 
+# Bootstrap sys.path so that `mcp_servers` package can be imported when running from subfolders
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
-def _setup_logging():
-    """Load logging configuration from config/logging.yml if present."""
-    try:
-        here = os.path.dirname(__file__)
-        project_root = os.path.abspath(os.path.join(here, "..", ".."))
-        cfg_path = os.path.join(project_root, "config", "logging.yml")
-        if os.path.exists(cfg_path):
-            yaml = YAML(typ="safe")
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                data = yaml.load(f) or {}
-            if isinstance(data, dict) and data:
-                logging.config.dictConfig(data)
-                return
-    except Exception:
-        pass
-    # fallback
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from mcp_servers.common.runtime import setup_logging
 
 
-_setup_logging()
+setup_logging()
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("WeatherAPIServer")

@@ -346,8 +346,10 @@ class PaddleOCRService:
             
             # 성능 특성 (실제 설정 기반)
             is_korean = self.lang == 'korean'
-            is_mobile_rec = 'mobile' in recognition_model
-            is_server_det = 'server' in detection_model
+            _rec_model = str(recognition_model or '')
+            _det_model = str(detection_model or '')
+            is_mobile_rec = 'mobile' in _rec_model
+            is_server_det = 'server' in _det_model
             
             print(f"\n📊 성능 특성 (실제 설정 기반):")
             print(f"   모델 조합: {'서버급 감지' if is_server_det else '모바일 감지'} + {'모바일 인식' if is_mobile_rec else '서버급 인식'}")
@@ -644,53 +646,82 @@ class PaddleOCRService:
         
         return preprocessing_settings
 
-    def run_ocr_from_path(self, file_path: str) -> list[dict] | None:
+    def run_ocr_from_path(self, file_path: str):
         """
-        파일 경로에서 OCR을 실행하고 원본 결과를 반환합니다.
-        
+        파일 경로에서 OCR을 실행하고 표준 dict(envelope) 결과를 반환합니다.
+
         Args:
             file_path (str): 이미지 파일 경로
-            
+
         Returns:
-            list[dict] | None: PaddleOCR 원본 결과 (성공시 OCRResult 딕셔너리 리스트, 실패시 None)
+            dict | None: {
+              'stage': 'ocr',
+              'data': { 'items': list[dict] },
+              'meta': { 'items': int, 'source': 'path', 'lang': str, 'engine': 'PaddleOCR' },
+              'version': '1.0'
+            } (실패 시 None)
         """
         try:
             # PaddleOCR 원본 결과 반환 (동시성 보호)
+            from app.models.envelopes import OCRData, OCRMeta, OCRResultEnvelope
             result = self._predict_guarded(file_path)
-            return result
+            items = result if isinstance(result, list) else []
+            env = OCRResultEnvelope(
+                stage='ocr',
+                data=OCRData(items=items),
+                meta=OCRMeta(items=len(items), source='path', lang=self.lang, engine='PaddleOCR'),
+            )
+            return env
             
         except Exception as e:
             print(f"❌ 파일 OCR 실패: {e}")
             return None
     
-    def run_ocr_from_nparray(self, image_array: np.ndarray) -> list[dict] | None:
+    def run_ocr_from_nparray(self, image_array: np.ndarray):
         """
-        numpy 배열에서 OCR을 실행하고 원본 결과를 반환합니다.
-        
+        numpy 배열에서 OCR을 실행하고 표준 dict(envelope) 결과를 반환합니다.
+
         Args:
             image_array (np.ndarray): OpenCV 이미지 배열 (BGR 형식)
-            
+
         Returns:
-            list[dict] | None: PaddleOCR 원본 결과 (성공시 OCRResult 딕셔너리 리스트, 실패시 None)
+            dict | None: {
+              'stage': 'ocr',
+              'data': { 'items': list[dict] },
+              'meta': { 'items': int, 'source': 'nparray', 'lang': str, 'engine': 'PaddleOCR' },
+              'version': '1.0'
+            } (실패 시 None)
         """
         try:
             # PaddleOCR 원본 결과 반환 (동시성 보호)
+            from app.models.envelopes import OCRData, OCRMeta, OCRResultEnvelope
             result = self._predict_guarded(image_array)
-            return result
+            items = result if isinstance(result, list) else []
+            env = OCRResultEnvelope(
+                stage='ocr',
+                data=OCRData(items=items),
+                meta=OCRMeta(items=len(items), source='nparray', lang=self.lang, engine='PaddleOCR'),
+            )
+            return env
             
         except Exception as e:
             print(f"❌ 배열 OCR 실패: {e}")
             return None
     
-    def run_ocr_from_bytes(self, image_bytes: bytes) -> list[dict] | None:
+    def run_ocr_from_bytes(self, image_bytes: bytes):
         """
-        바이트 데이터에서 OCR을 실행하고 원본 결과를 반환합니다.
-        
+        바이트 데이터에서 OCR을 실행하고 표준 dict(envelope) 결과를 반환합니다.
+
         Args:
             image_bytes (bytes): 이미지 파일의 바이트 데이터
-            
+
         Returns:
-            list[dict] | None: PaddleOCR 원본 결과 (성공시 OCRResult 딕셔너리 리스트, 실패시 None)
+            dict | None: {
+              'stage': 'ocr',
+              'data': { 'items': list[dict] },
+              'meta': { 'items': int, 'source': 'bytes', 'lang': str, 'engine': 'PaddleOCR' },
+              'version': '1.0'
+            } (실패 시 None)
         """
         try:
             # 바이트 데이터를 numpy 배열로 변환
@@ -701,7 +732,15 @@ class PaddleOCRService:
                 return None
             
             # numpy 배열로 OCR 실행 (동시성 보호)
-            return self._predict_guarded(cv_image)
+            from app.models.envelopes import OCRData, OCRMeta, OCRResultEnvelope
+            result = self._predict_guarded(cv_image)
+            items = result if isinstance(result, list) else []
+            env = OCRResultEnvelope(
+                stage='ocr',
+                data=OCRData(items=items),
+                meta=OCRMeta(items=len(items), source='bytes', lang=self.lang, engine='PaddleOCR'),
+            )
+            return env
             
         except Exception as e:
             print(f"❌ 바이트 데이터 OCR 실패: {e}")

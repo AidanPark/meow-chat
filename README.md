@@ -1,6 +1,30 @@
 # 🐾 반려동물(고양이) 헬스케어 상담 챗봇 프로젝트
 ---
 
+## 🚀 Quick Start
+
+### 환경 설정 및 실행
+
+```bash
+# 1. Conda 환경 활성화
+conda activate meow-chat
+
+# 2. Jupyter Lab 시작 (GLIBCXX 문제 해결 포함)
+./start_jupyter.sh
+
+# 3. 또는 직접 환경변수 설정 후 실행
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+jupyter lab
+```
+
+### 🔧 라이브러리 문제 해결
+
+PyMuPDF 패키지 사용 시 `GLIBCXX_3.4.31` 에러가 발생할 수 있습니다:
+- **원인**: 시스템 libstdc++가 오래된 버전
+- **해결**: `start_jupyter.sh` 스크립트 사용 (Conda 환경의 최신 라이브러리 우선 로드)
+
+---
+
 ## 🧶 프로젝트 개요
 
 고양이 헬스케어 챗봇은 LangChain 기반의 RAG 구조를 활용하여 반려묘의 건강 데이터를 지능적으로 분석하고, 맞춤형 상담을 제공하는 AI 서비스입니다.  
@@ -54,7 +78,7 @@ meow-chat/
 │   │   │
 │   │   ├── 📂 ocr/                       # OCR 관련 서비스
 │   │   │   ├── 📄 __init__.py
-│   │   │   ├── 📄 paddle_ocr.py          # PaddleOCR 서비스
+│   │   │   ├── 📄 paddle_ocr_service.py  # PaddleOCR 서비스
 │   │   │   ├── 📄 text_processor.py      # OCR 후처리
 │   │   │   └── 📄 image_enhancer.py      # 이미지 전처리
 │   │   │
@@ -341,5 +365,59 @@ meow-chat/
 데이타를 모아서 뭘 할수 있는가
 
 생성된 결과의 검증은?
+
+---
+
+## 🧪 OCR 파이프라인 반환 타입 표준화 (Pydantic v2)
+
+최근 OCR 파이프라인의 I/O 계약이 Pydantic v2 모델 기반으로 통일되었습니다. 단계별로 아래의 모델 인스턴스를 반환/입력으로 사용합니다.
+
+- 이미지 → OCR: `OCRResultEnvelope`
+- OCR → 추출: `ExtractionEnvelope` (data는 dict 형태로 추출 결과를 포함)
+- 추출 병합: `MergeEnvelope`
+
+핵심 포인트
+
+- 모든 단계는 “Pydantic 모델 인스턴스”를 반환합니다. JSON이 필요할 때만 직렬화하세요.
+- JSON 직렬화는 Pydantic v2 API를 사용하세요: `model_dump_json(indent=2, ensure_ascii=False)`
+- OCR 결과 텍스트 토큰은 `ocr_env.data.items`에서 접근합니다.
+- 추출 단계의 병합은 “추출 dict들의 리스트”를 입력으로 받습니다. `merge_extractions(list[dict]) → MergeEnvelope`
+- 스트리밍 진행 이벤트는 dict이며, `result` 키에 모델 인스턴스가 포함될 수 있습니다.
+
+간단 예시
+
+```python
+import os
+from app.services.analysis import OCRPipelineManager
+
+manager = OCRPipelineManager(
+  lang="korean",
+  debug=True,
+  api_key=os.getenv("OPENAI_API_KEY"),
+  llm_model="gpt-4.1-mini",
+)
+
+with open("tests/notebooks/ocr/assets/images/20241121_0.png", "rb") as f:
+  b = f.read()
+
+# 1) 이미지 → OCR 결과(모델)
+ocr_env = manager.image_to_ocr(b, do_preprocess=True)
+items = getattr(ocr_env, "data", None).items if hasattr(ocr_env, "data") else None
+
+# 2) OCR → 추출(모델)
+extract_env = manager.ocr_to_extraction(ocr_env)
+
+# 3) 여러 추출 결과 병합(모델) → JSON 출력
+merged_env = manager.merge_extractions([extract_env.data])
+print(merged_env.model_dump_json(indent=2, ensure_ascii=False))
+```
+
+마이그레이션 노트
+
+- 과거 list/dict 기반 반환(예: `ocr_result[0]`)은 제거되었습니다. 모델 속성으로 접근하세요.
+- 모델 → dict/JSON 변환은 명시적 직렬화로 처리하세요(`model_dump`, `model_dump_json`).
+- 노트북 예시는 `tests/notebooks/ocr/paddleocr_inline_test.ipynb`를 참고하세요.
+
+자세한 계약은 `docs/pipeline_contract.md`를 참고하세요.
 
 

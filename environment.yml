@@ -10,12 +10,12 @@ dependencies:
   - pip
 
   # 🔬 과학계산 & 이미지처리 (conda 추천 - 자동 최적화)
-  - numpy                      # conda가 최적 버전 선택
+  - numpy<2.0                  # PaddleOCR 호환성 (2.x 불가)
   - opencv                     # 복잡한 C++ 의존성 자동 해결
   - matplotlib                 # 시각화
   - pandas                     # 데이터 분석  
   - pillow                     # 이미지 형식 지원
-  - scipy                      # 과학계산
+  - scipy<1.15                 # PaddleOCR 호환성 (1.15+ 불가)
   - scikit-learn              # 머신러닝 기본
   - scikit-image              # 이미지 처리 알고리즘
 

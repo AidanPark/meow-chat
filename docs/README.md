@@ -89,14 +89,10 @@
 ### 4. 🔄 LangGraph 노드 구성
 - 입력 타입 분기 노드: 텍스트 / 이미지 / 영상 / 음성 등 입력에 따라 처리 경로 분기  
   (영상과 음성은 이번 과제에서는 제외)  
-- 전처리 노드: OCR 등  
 - 질의 응답 노드: RAG 기반 응답 생성  
 - 후처리 노드: 응답 요약, 사용자 피드백 반영
 
 ### 5. 🛠 Tool Integration (향후 확장 가능 영역)
-- 음성 분석: 고양이 울음소리 → 감정/건강 상태 추정  
-  → 외부 음성 분석 API 또는 자체 모델 연동  
-- 영상 분석: 호흡수, 움직임 분석  
   → `OpenCV`, `Mediapipe`, `Vision API` 등 활용 가능
 
 ### 6. 🧾 Memory & Context Management
@@ -109,13 +105,13 @@
 
 ## 🤝 데이터 및 리소스
 
-- 다양한 공개 데이터셋과 문서 활용 가능:
   - Kaggle 반려묘 건강 데이터셋  
   - PetMD, VCA Hospitals 등 수의학 공개 자료  
   - 수의학 논문·학회 자료 (PubMed, VetJournal)  
   - CSV/검사지 PDF/처방전 이미지 → OCR 및 구조화 데이터 변환 가능
 
----
+자세한 계약은 `docs/pipeline_contract.md`를 참고하세요.
+
 
 ## 📚 기존 서비스 / 연구 사례
 
@@ -125,12 +121,8 @@
 - **Livia (2025, arXiv)**: 감정 인식(emotion-aware)과 성격(personality)의 진화를 통해 장기적인 관계를 만드는 AR 기반 AI 동반자.  
 - **반려동물 헬스케어 챗봇 연구 (2024)**: “AI Chatbots in Pet Health Care” 논문 등에서, 보호자 상담과 의료 정보 제공에 AI를 활용하는 기회와 도전을 제시. 아직 “생애 전 주기 동행형” 개념은 드물어 참신성이 높음.  
 
----
-
 ## 🚀 기술적 / 탐구 방향
 
-1. **장기 기억(Long-Term Memory)**  
-   - `ConversationBufferMemory`, `SummaryMemory` 등 활용해 시간 흐름에 따른 건강 기록 누적  
    - 중요도 기반 메모리 관리(중대 질병 이력은 강화, 일상 대화는 요약)
 
 2. **페르소나 진화(Persona Evolution)**  

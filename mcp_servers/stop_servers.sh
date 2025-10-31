@@ -23,11 +23,18 @@ if [ -f /tmp/health_server.pid ]; then
     rm /tmp/health_server.pid
 fi
 
+if [ -f /tmp/ocr_server.pid ]; then
+    OCR_PID=$(cat /tmp/ocr_server.pid)
+    kill $OCR_PID 2>/dev/null && echo "✅ OCR API Server 종료됨 (PID: $OCR_PID)" || echo "⚠️ OCR Server 종료 실패"
+    rm /tmp/ocr_server.pid
+fi
+
 # 남은 프로세스들도 강제 종료
 echo "🔍 남은 프로세스 정리 중..."
 pkill -f "math_utility_server.py" 2>/dev/null
 pkill -f "weather_api_server.py" 2>/dev/null
 pkill -f "cat_health_server.py" 2>/dev/null
+pkill -f "ocr_api_server.py" 2>/dev/null
 
 sleep 2
 
@@ -49,6 +56,12 @@ if lsof -ti:8002 > /dev/null 2>&1; then
     echo "⚠️ 포트 8002가 여전히 사용 중입니다"
 else
     echo "✅ 포트 8002 해제됨"
+fi
+
+if lsof -ti:8003 > /dev/null 2>&1; then
+    echo "⚠️ 포트 8003이 여전히 사용 중입니다"
+else
+    echo "✅ 포트 8003 해제됨"
 fi
 
 echo ""

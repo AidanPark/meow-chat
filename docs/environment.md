@@ -212,7 +212,7 @@ print(f'PaddleOCR: {paddleocr.__version__}')
 # MyPaddleOCR 클래스 테스트
 python -c "
 try:
-    from app.services.ocr.paddle_ocr import MyPaddleOCR
+    from app.services.ocr.paddle_ocr_service import PaddleOCRService
     ocr = MyPaddleOCR(lang='korean', show_log=False)
     print('✅ MyPaddleOCR 생성 성공!')
 except Exception as e:
