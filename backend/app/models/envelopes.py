@@ -1,11 +1,14 @@
+from __future__ import annotations
+
+# 필요한 타입/클래스 임포트
+from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar
+
+from pydantic import BaseModel, Field
+
 # Stage, TData, TMeta 타입 변수 정의
 Stage = Literal['preprocess', 'ocr', 'line_group', 'extract', 'merge', 'dedup']
 TData = TypeVar('TData')
 TMeta = TypeVar('TMeta')
-# from __future__ import annotations
-# 필요한 타입/클래스 임포트
-from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar
-from pydantic import BaseModel, Field
 # 파이프라인 각 단계(OCR/추출/병합 등)별 데이터와 메타데이터를 일관되고 타입 안전하게 관리하는 모델 정의 파일
 #
 # 주요 역할:

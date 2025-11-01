@@ -72,8 +72,8 @@ python ocr_api_server.py &
 OCR_PID=$!
 
 # 서버 시작 대기
-echo "⏳ 서버들이 시작되기를 기다리는 중... (5초)"
-sleep 5
+echo "⏳ 서버들이 시작되기를 기다리는 중... (10초)"
+sleep 10
 
 # 서버 상태 확인
 echo "🔍 서버 상태 확인 중..."

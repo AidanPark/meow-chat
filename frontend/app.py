@@ -1,8 +1,8 @@
 """
-Streamlit Chat App (Meow Chat)
-- Multi MCP server tools via langchain_mcp_adapters
-- Streaming responses, rolling summary + recent N turns
-- Long-term memory (Chroma + OpenAIEmbeddings) with tiktoken trimming
+Meow Chat 프론트엔드
+1) LangGraph 기반 에이전트로 MCP 서버의 도구를 호출하고, 스트리밍 응답을 UI에 전달한다.
+2) 사용자 대화를 세션 상태에 저장하고, 일정 턴이 넘으면 LLM 요약으로 압축한다.
+3) 장기 메모리(MCP + Chroma), 이미지 업로드, 프로필 네임스페이스 등 부가 기능을 제공한다.
 """
 
 import os
@@ -13,19 +13,19 @@ from datetime import datetime
 import io
 import streamlit as st
 
-# LangChain MCP Adapters
+# MCP 서버와 연결하는 LangChain 어댑터
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
 from dotenv import load_dotenv, find_dotenv
 from ruamel.yaml import YAML
 
-# Ensure this directory is import-first (avoid clashing with top-level `config/`)
+# 동일 경로의 모듈을 우선 임포트할 수 있도록 sys.path 정비
 CURRENT_DIR = os.path.dirname(__file__)
 if CURRENT_DIR and CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
-# Local modules
+# 프론트엔드 서비스/설정 모듈
 from config.loader import load_mcp_server_config
 from config.defaults import RECENT_TURN_WINDOW, SUMMARIZE_TRIGGER_TURNS, RETRIEVAL_TOP_K
 from services.streaming import stream_agent_generator
@@ -38,19 +38,35 @@ from services.memory.memory_utils import trim_memory_block
 from services.memory.core_facts import build_pinned_core_facts_block
 from services.memory.memory_search import search_memories, MEMORY_TYPES
 
-# Load .env
+# ---------------------------------------------------------------------------
+# 전체 UI 흐름 안내
+# 1) 전역 설정: .env와 MCP 서버 설정을 불러오고, Streamlit 페이지 옵션과 CSS를 적용한다.
+# 2) 세션 상태 초기화: 메시지, 요약, 메모리, 업로드된 이미지 등 대화 유지에 필요한 상태 값을 준비한다.
+# 3) Sidebar:
+#    - 프로필 전환 및 새 네임스페이스 생성
+#    - 이미지 업로드 관리
+#    - 장기 메모리/핵심 사실 관련 슬라이더와 스위치
+#    - 환경 진단(필수 패키지 설치 여부), 메모리 검색 도구
+# 4) 메인 영역:
+#    - 과거 메시지를 순서대로 렌더링
+#    - 사용자 입력을 받으면 메시지 목록에 추가하고, LangGraph 에이전트를 비동기로 실행
+#    - 실행 도중 stream_agent_generator 가 토큰을 streaming 하며, 완료 후 요약 및 메모리 저장 로직 수행
+# 5) 대화 종료 후 UI는 마지막 응답, 사용된 도구, 요약 결과, 메모리 기록 등을 세션 상태로 관리한다.
+# ---------------------------------------------------------------------------
+
+# 실행 환경 변수 로드
 load_dotenv(find_dotenv())
 
-# Streamlit page config
+# 스트림릿 페이지 속성 구성
 st.set_page_config(page_title="Meow Chat", page_icon="🐱", layout="wide")
 
-# CSS
+# 핵심 CSS 삽입
 inject_core_css()
 
-# Servers config
+# MCP 서버 설정 불러오기
 SERVERS = load_mcp_server_config()
 
-# Session state init
+# 세션 상태 기본값 초기화
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "uploaded_images" not in st.session_state:
@@ -96,7 +112,7 @@ def get_model_and_client():
     if not os.getenv("OPENAI_API_KEY"):
         st.error("OPENAI_API_KEY가 설정되지 않았습니다. .env 또는 환경변수를 확인해주세요.")
         st.stop()
-    # Lazy import with diagnostics to avoid hard crashes from version mismatches
+    # LangChain 모듈 임포트 시 버전 불일치가 잦으므로, 실패하면 버전 정보를 함께 안내한다.
     try:
         from langchain_openai import ChatOpenAI  # type: ignore
     except Exception as e:
@@ -187,7 +203,7 @@ with st.sidebar:
             current_names.append(file.name)
         st.session_state.uploaded_images = stored
         st.session_state.previous_uploaded_count = len(stored)
-        # No additional notification; chat input 이미 첨부 개수를 표시합니다.
+        # 별도 안내 메시지는 띄우지 않고 입력창 프롬프트에서 첨부 현황을 확인하도록 한다.
     else:
         if st.session_state.uploaded_images:
             st.session_state.uploaded_images = []
@@ -293,7 +309,7 @@ with st.sidebar:
                 st.info("선택과 결과를 초기화했습니다.")
 
 
-# 채팅 메시지 렌더
+# 대화 메시지 영역 렌더링
 st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
 for role, content in st.session_state.messages:
     with st.chat_message(role):
@@ -301,7 +317,7 @@ for role, content in st.session_state.messages:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 입력
+# 사용자 입력 영역
 st.markdown('<div class="input-section">', unsafe_allow_html=True)
 
 prompt_text = "질문을 입력하세요"
@@ -453,4 +469,4 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
             st.markdown(err)
             st.session_state.messages.append(("assistant", err))
 
-# End of app
+# 앱 로직 종료

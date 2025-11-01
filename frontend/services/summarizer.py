@@ -5,15 +5,19 @@ from typing import List, Tuple
 MessageTuple = Tuple[str, str]
 
 
+# ---------------------------------------------------------------------------
+# 대화 요약 관리 모듈
+# ---------------------------------------------------------------------------
+# 오래된 대화 로그를 요약하여 세션 상태에 축약 정보를 보관하고,
+# 최근 N턴만 원본 메시지를 유지한다. Streamlit 앱에서는
+# summarize_trigger_turns(요약 발동 턴 수)과 recent_turn_window(최근 유지 턴 수)를
+# 조절하면서 이 로직을 사용한다.
+# ---------------------------------------------------------------------------
+
+
 def _count_user_turns(messages: List[MessageTuple]) -> int:
-    # Count user messages as turns; assumes alternating user/assistant
+    """사용자 발화 수를 셉니다."""
     return sum(1 for role, _ in messages if role == "user")
-
-
-def _prune_history(messages: List[MessageTuple], recent_turn_window: int) -> List[MessageTuple]:
-    keep = max(0, 2 * recent_turn_window)
-    return messages[-keep:] if keep else []
-
 
 def maybe_update_summary(
     summary_text: str | None,
@@ -22,16 +26,12 @@ def maybe_update_summary(
     summarize_trigger_turns: int,
     model,
 ) -> tuple[str | None, List[MessageTuple]]:
-    """If turn count exceeds threshold, summarize older part and prune history.
-
-    Returns: (new_summary_text, pruned_messages)
-    """
+    """대화 길이가 요약 기준을 넘으면 오래된 부분을 LLM으로 요약한다."""
     turns = _count_user_turns(messages)
     if turns <= summarize_trigger_turns:
-        # No change
         return summary_text, messages
 
-    # Split into old part (to summarize) and recent part to keep
+    # 오래된 부분은 요약하고, 최근 부분(recent_part)은 그대로 유지한다.
     keep_items = max(0, 2 * recent_turn_window)
     old_part = messages[:-keep_items] if keep_items else messages
     recent_part = messages[-keep_items:] if keep_items else []

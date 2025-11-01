@@ -7,30 +7,36 @@ import time
 from typing import Dict, Any, Generator, List, Set
 
 from langchain_core.callbacks import BaseCallbackHandler
-from services import langgraph_compat  # noqa: F401  # ensure compatibility patch runs
-from langgraph.prebuilt import create_react_agent_executor
+from services.langgraph_compat import create_react_agent_executor
+
+# 이 모듈은 LangGraph 기반 에이전트를 백그라운드 스레드에서 실행하고,
+# 얻어진 토큰 스트림을 Streamlit UI에 실시간으로 전달하는 역할을 담당한다.
+# - UIStreamingCallbackHandler: LangChain 콜백에서 토큰/도구 사용 정보를 수집
+# - stream_agent_generator: 비동기로 에이전트를 돌리고, 큐에 쌓인 토큰을 제너레이터로 방출
+# rec 딕셔너리에는 최종 응답 텍스트, 토큰 목록, 사용된 도구 내역 등이 채워져
+# 호출 측(frontend/app.py)에서 UI 상태를 업데이트하는 데 활용된다.
 
 
 class UIStreamingCallbackHandler(BaseCallbackHandler):
-    """Callback handler to stream tokens into a queue and record tool usage."""
+    """LLM 토큰과 도구 호출 정보를 큐에 흘려보내는 스트리밍 콜백."""
 
     def __init__(self, token_queue: Queue, done_event: Event, rec: Dict[str, Any]):
-        # rec: {"tokens": list[str], "used_tools": set[str], "tool_details": list[dict]}
+        # rec에는 실행 중 수집한 토큰, 사용된 도구, 도구 인자, 최종 응답 등을 누적한다.
         self.token_queue = token_queue
         self.done_event = done_event
         self.rec = rec
 
-    # LLM token stream
     def on_llm_new_token(self, token: str, **kwargs):  # type: ignore[override]
+        # 새 토큰이 들어오면 즉시 토큰 큐와 기록에 추가한다.
         try:
             if token:
                 self.rec.setdefault("tokens", []).append(token)
                 self.token_queue.put(token)
         except Exception:
-            # don't break the stream on callback issues
             pass
 
     def on_tool_start(self, serialized=None, input_str=None, **kwargs):  # type: ignore[override]
+        # LangGraph 에이전트가 도구를 실행하기 직전에 도구 이름과 인자를 기록한다.
         try:
             name = None
             if isinstance(serialized, dict):
@@ -43,8 +49,6 @@ class UIStreamingCallbackHandler(BaseCallbackHandler):
         except Exception:
             pass
 
-    # Keep other lifecycle hooks as no-ops to avoid noise
-
 
 def stream_agent_generator(
     lc_messages: List[Dict[str, Any]],
@@ -52,10 +56,7 @@ def stream_agent_generator(
     model,
     client,
 ) -> Generator[str, None, None]:
-    """Run the async agent in a background thread and yield tokens for Streamlit.
-
-    The 'rec' dict is mutated to include final_text, tokens, and tool details.
-    """
+    """LangGraph 에이전트를 비동기 실행하고 토큰을 스트리밍으로 내보낸다."""
     token_queue: Queue[str] = Queue()
     done = Event()
 
@@ -66,27 +67,25 @@ def stream_agent_generator(
             tools = await client.get_tools()
             agent = create_react_agent_executor(model, tools)
             result = await agent.ainvoke({"messages": lc_messages}, config={"callbacks": [handler]})
-            final_text = None
+
             messages = None
             if isinstance(result, dict):
                 messages = result.get("messages") or result.get("outputs")
             elif isinstance(result, list):
                 messages = result
+
             if messages:
                 final = messages[-1]
-                final_text = getattr(final, "content", None) or str(final)
-            rec["final_text"] = final_text
+                rec["final_text"] = getattr(final, "content", None) or str(final)
         except Exception as e:
             rec["error"] = str(e)
             token_queue.put(f"\n[에러] {e}")
         finally:
             done.set()
 
-    # Start async work in a separate thread
     thread = Thread(target=lambda: asyncio.run(_run_async()), daemon=True)
     thread.start()
 
-    # Yield tokens as they arrive
     aggregated: List[str] = []
     while not (done.is_set() and token_queue.empty()):
         try:

@@ -22,6 +22,8 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Optional
 
+import app.compat  # noqa: F401  # 호환성 패치(예: langchain.docstore alias) 적용
+
 from app.core.config import AppConfig, load_config_from_env
 from app.services.ocr.paddle_ocr_service import PaddleOCRService
 from app.services.analysis.lab_table_extractor import LabTableExtractor, Settings as ExtractorSettings
