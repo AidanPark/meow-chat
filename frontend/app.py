@@ -11,7 +11,9 @@ import asyncio
 import time
 from datetime import datetime
 import io
+import json
 import streamlit as st
+from typing import Any
 
 # MCP 서버와 연결하는 LangChain 어댑터
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -24,6 +26,8 @@ from ruamel.yaml import YAML
 CURRENT_DIR = os.path.dirname(__file__)
 if CURRENT_DIR and CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
+
+UPLOAD_ROOT = os.path.join(CURRENT_DIR, "uploads")
 
 # 프론트엔드 서비스/설정 모듈
 from config.loader import load_mcp_server_config
@@ -142,6 +146,59 @@ def get_model_and_client():
     model = ChatOpenAI(model="gpt-4.1-mini", streaming=True)
     client = MultiServerMCPClient(SERVERS)  # type: ignore[arg-type]
     return model, client
+
+
+def run_ocr_on_images(paths: list[str], client) -> list[tuple[str, str]]:
+    if not paths:
+        return []
+
+    async def _run():
+        tools = await client.get_tools()
+        ocr_tool = None
+        for tool in tools:
+            if getattr(tool, "name", "") == "ocr_image_file":
+                ocr_tool = tool
+                break
+        if ocr_tool is None:
+            return []
+
+        try:
+            res = await ocr_tool.ainvoke({"paths": paths, "do_preprocess": True})
+        except Exception as exc:
+            err = json.dumps({"error": str(exc)}, ensure_ascii=False)
+            return [(path, err) for path in paths]
+
+        results = []
+        if isinstance(res, list):
+            for idx, item in enumerate(res):
+                path = paths[idx] if idx < len(paths) else ""
+                raw = ""
+                if isinstance(item, dict):
+                    path = str(item.get("path", path))
+                    if item.get("ocr_result"):
+                        raw = str(item.get("ocr_result"))
+                    elif item.get("error"):
+                        raw = json.dumps({"error": str(item.get("error"))}, ensure_ascii=False)
+                elif isinstance(item, str):
+                    raw = item
+                if not raw:
+                    raw = json.dumps({"error": "empty ocr result"}, ensure_ascii=False)
+                results.append((path, raw))
+        else:
+            txt = str(res)
+            for path in paths:
+                results.append((path, txt))
+        return results
+
+    try:
+        return asyncio.run(_run())
+    except RuntimeError:
+        # 이미 이벤트 루프가 있는 환경(Streamlit)에서 실행될 가능성 대비
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_run())
+        finally:
+            loop.close()
 
 
 with st.sidebar:
@@ -333,20 +390,89 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
         image_info = f" [📎 {len(st.session_state.uploaded_images)}개 이미지 첨부]"
         user_message += image_info
 
+    saved_image_paths: list[str] = []
+    display_images = list(st.session_state.uploaded_images)
+    if st.session_state.uploaded_images:
+        profile_dir = os.path.abspath(os.path.join(UPLOAD_ROOT, st.session_state.user_id))
+        os.makedirs(profile_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for idx, img in enumerate(st.session_state.uploaded_images):
+            try:
+                data = img.getvalue()
+                original_name = getattr(img, "name", f"upload_{idx}.png")
+                safe_name = f"{timestamp}_{idx}_{original_name}"
+                path = os.path.abspath(os.path.join(profile_dir, safe_name))
+                with open(path, "wb") as f:
+                    f.write(data)
+                saved_image_paths.append(path)
+            except Exception:
+                continue
+        if saved_image_paths:
+            path_lines = "\n".join(f"- {p}" for p in saved_image_paths)
+            user_message += "\n\n[첨부 이미지 경로]\n" + path_lines
+        st.session_state.uploaded_images = []
+        st.session_state.previous_uploaded_count = 0
+
     st.session_state.messages.append(("user", user_message))
 
     with st.chat_message("user"):
         st.markdown(user_message)
-        if st.session_state.uploaded_images:
-            img_cols = st.columns(min(len(st.session_state.uploaded_images), 3))
-            for i, img_file in enumerate(st.session_state.uploaded_images):
+        if display_images:
+            img_cols = st.columns(min(len(display_images), 3))
+            for i, img_file in enumerate(display_images):
+                try:
+                    img_file.seek(0)
+                except Exception:
+                    pass
                 with img_cols[i % 3]:
                     st.image(img_file, caption=img_file.name, width=120)
 
     with st.chat_message("assistant"):
         try:
-            rec = {"tokens": [], "used_tools": set(), "tool_details": [], "final_text": None}
             model, client = get_model_and_client()
+
+            if saved_image_paths:
+                ocr_results = run_ocr_on_images(saved_image_paths, client)
+
+                response_entries: list[dict[str, Any]] = []
+                warnings: list[str] = []
+
+                with st.expander("🖨️ OCR 결과", expanded=True):
+                    for path, raw in ocr_results:
+                        entry: dict[str, Any] = {"path": path}
+                        if raw:
+                            try:
+                                parsed = json.loads(raw)
+                                entry["result"] = parsed
+                                st.markdown(f"**파일**: `{path}`")
+                                st.json(parsed)
+                            except Exception:
+                                entry["raw"] = raw
+                                st.markdown(f"**파일**: `{path}`")
+                                st.text(raw)
+                        else:
+                            entry["error"] = "empty ocr result"
+                            st.markdown(f"**파일**: `{path}`")
+                            st.warning("empty ocr result")
+                        if "error" in entry and entry["error"]:
+                            warnings.append(f"- `{path}`: {entry['error']}")
+                        elif isinstance(entry.get("result"), dict) and "error" in entry["result"]:
+                            warnings.append(f"- `{path}`: {entry['result'].get('error')}")
+                        response_entries.append(entry)
+
+                if warnings:
+                    st.warning("일부 이미지에서 OCR 오류가 발생했습니다:\n" + "\n".join(warnings))
+
+                response_json = json.dumps(response_entries, ensure_ascii=False, indent=2)
+
+                now_stamp = datetime.now().strftime("%H:%M:%S")
+                for path, _ in ocr_results:
+                    st.session_state.tool_history.append({"time": now_stamp, "name": "ocr_image_file", "args": {"path": path}})
+
+                st.session_state.messages.append(("assistant", response_json))
+                st.stop()
+
+            rec = {"tokens": [], "used_tools": set(), "tool_details": [], "final_text": None}
 
             summary = st.session_state.get("summary_text")
             rt_window = int(st.session_state.recent_turn_window)

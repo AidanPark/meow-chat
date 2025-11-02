@@ -9,7 +9,8 @@ echo "기존 서버 프로세스 종료 중..."
 pkill -f "math_utility_server.py"
 pkill -f "weather_api_server.py" 
 pkill -f "cat_health_server.py"
-pkill -f "ocr_api_server.py"
+pkill -f "core_ocr_server.py"
+pkill -f "extract_lab_report_server.py"
 
 sleep 2
 
@@ -46,8 +47,10 @@ WEATHER_HOST="${MCP_WEATHER_API_HOST:-${MCP_HOST:-127.0.0.1}}"
 WEATHER_PORT="${MCP_WEATHER_API_PORT:-${MCP_PORT:-8001}}"
 HEALTH_HOST="${MCP_CAT_HEALTH_HOST:-${MCP_HOST:-127.0.0.1}}"
 HEALTH_PORT="${MCP_CAT_HEALTH_PORT:-${MCP_PORT:-8002}}"
-OCR_HOST="${MCP_OCR_API_HOST:-${MCP_HOST:-127.0.0.1}}"
-OCR_PORT="${MCP_OCR_API_PORT:-${MCP_PORT:-8003}}"
+CORE_HOST="${MCP_OCR_CORE_HOST:-${MCP_HOST:-127.0.0.1}}"
+CORE_PORT="${MCP_OCR_CORE_PORT:-${MCP_PORT:-8003}}"
+LAB_HOST="${MCP_EXTRACT_LAB_REPORT_HOST:-${MCP_HOST:-127.0.0.1}}"
+LAB_PORT="${MCP_EXTRACT_LAB_REPORT_PORT:-8004}"
 
 # 각 서버를 백그라운드에서 실행
 echo "1️⃣ Math & Utility Server 시작 (${MATH_HOST}:${MATH_PORT})..."
@@ -66,10 +69,15 @@ python cat_health_server.py &
 HEALTH_PID=$!
 
 # OCR API Server
-echo "4️⃣ OCR API Server 시작 (${OCR_HOST}:${OCR_PORT})..."
-cd "$SCRIPT_DIR/ocr"
-python ocr_api_server.py &
-OCR_PID=$!
+echo "4️⃣ OCR Core Server 시작 (${CORE_HOST}:${CORE_PORT})..."
+cd "$SCRIPT_DIR/ocr_core"
+python core_ocr_server.py &
+CORE_PID=$!
+
+echo "5️⃣ Lab Report OCR Server 시작 (${LAB_HOST}:${LAB_PORT})..."
+cd "$SCRIPT_DIR/lab_report"
+python extract_lab_report_server.py &
+LAB_PID=$!
 
 # 서버 시작 대기
 echo "⏳ 서버들이 시작되기를 기다리는 중... (10초)"
@@ -96,10 +104,16 @@ else
     echo "❌ Cat Health Server (${HEALTH_HOST}:${HEALTH_PORT}) - 오류"
 fi
 
-if curl -s http://${OCR_HOST}:${OCR_PORT}/health > /dev/null 2>&1; then
-    echo "✅ OCR API Server (${OCR_HOST}:${OCR_PORT}) - 정상"
+if curl -s http://${CORE_HOST}:${CORE_PORT}/health > /dev/null 2>&1; then
+    echo "✅ OCR Core Server (${CORE_HOST}:${CORE_PORT}) - 정상"
 else
-    echo "❌ OCR API Server (${OCR_HOST}:${OCR_PORT}) - 오류"
+    echo "❌ OCR Core Server (${CORE_HOST}:${CORE_PORT}) - 오류"
+fi
+
+if curl -s http://${LAB_HOST}:${LAB_PORT}/health > /dev/null 2>&1; then
+    echo "✅ Lab Report OCR Server (${LAB_HOST}:${LAB_PORT}) - 정상"
+else
+    echo "❌ Lab Report OCR Server (${LAB_HOST}:${LAB_PORT}) - 오류"
 fi
 
 echo ""
@@ -109,7 +123,8 @@ echo "📊 서버 정보:"
 echo "   🧮 Math & Utility: http://${MATH_HOST}:${MATH_PORT}"
 echo "   🌤️ Weather & API:   http://${WEATHER_HOST}:${WEATHER_PORT}"
 echo "   🐱 Cat Health:      http://${HEALTH_HOST}:${HEALTH_PORT}"
-echo "   🖼️ OCR API:         http://${OCR_HOST}:${OCR_PORT}"
+echo "   🖼️ OCR Core:        http://${CORE_HOST}:${CORE_PORT}"
+echo "   🗂️ Lab Report OCR:  http://${LAB_HOST}:${LAB_PORT}"
 echo ""
 echo "🚀 클라이언트 실행 방법:"
 echo "   streamlit run frontend/app.py"
@@ -123,13 +138,15 @@ echo "📋 프로세스 ID:"
 echo "   Math Server PID: $MATH_PID"
 echo "   Weather Server PID: $WEATHER_PID"  
 echo "   Health Server PID: $HEALTH_PID"
-echo "   OCR Server PID:   $OCR_PID"
+echo "   OCR Core PID:     $CORE_PID"
+echo "   Lab OCR PID:      $LAB_PID"
 
 # PID 정보를 파일에 저장 (종료시 사용)
 echo "$MATH_PID" > /tmp/math_server.pid
 echo "$WEATHER_PID" > /tmp/weather_server.pid
 echo "$HEALTH_PID" > /tmp/health_server.pid
-echo "$OCR_PID" > /tmp/ocr_server.pid
+echo "$CORE_PID" > /tmp/ocr_core_server.pid
+echo "$LAB_PID" > /tmp/extract_lab_report_server.pid
 
 echo ""
 echo "💡 팁: 로그를 보려면 각 서버 디렉토리에서 로그 파일을 확인하세요."

@@ -278,28 +278,20 @@ meow-chat/
 간단 예시
 
 ```python
-import os
-from app.services.analysis import OCRPipelineManager
+from app.services.analysis import LabReportExtractor
+from app.models.envelopes import OCRResultEnvelope
 
-manager = OCRPipelineManager(
-  lang="korean",
-  debug=True,
-  api_key=os.getenv("OPENAI_API_KEY"),
-  llm_model="gpt-4.1-mini",
-)
+# 1) 이미지 → OCR 결과는 `backend/mcp_servers/ocr_core` 서버가 수행합니다.
+#    여기서는 이미 얻어온 OCRResultEnvelope를 가정합니다.
+ocr_env: OCRResultEnvelope = ...
 
-with open("tests/notebooks/ocr/assets/images/20241121_0.png", "rb") as f:
-  b = f.read()
-
-# 1) 이미지 → OCR 결과(모델)
-ocr_env = manager.image_to_ocr(b, do_preprocess=True)
-items = getattr(ocr_env, "data", None).items if hasattr(ocr_env, "data") else None
+extractor = LabReportExtractor()
 
 # 2) OCR → 추출(모델)
-extract_env = manager.ocr_to_extraction(ocr_env)
+extract_env = extractor.ocr_to_extraction(ocr_env)
 
 # 3) 여러 추출 결과 병합(모델) → JSON 출력
-merged_env = manager.merge_extractions([extract_env.data])
+merged_env = extractor.merge_extractions([extract_env.data])
 print(merged_env.model_dump_json(indent=2, ensure_ascii=False))
 ```
 
@@ -310,5 +302,4 @@ print(merged_env.model_dump_json(indent=2, ensure_ascii=False))
 - 노트북 예시는 `tests/notebooks/ocr/paddleocr_inline_test.ipynb`를 참고하세요.
 
 자세한 계약은 `docs/pipeline_contract.md`를 참고하세요.
-
 

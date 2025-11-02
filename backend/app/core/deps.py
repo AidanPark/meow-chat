@@ -2,20 +2,19 @@
 프로젝트 핵심 서비스/설정 DI(Dependency Injection) 공급자 모듈
 
 주요 역할:
-- OCR, 이미지/라인 전처리, 추출기, 파이프라인 매니저 등 주요 컴포넌트의 인스턴스를 중앙에서 관리/제공합니다.
-- 환경설정(AppConfig)을 기반으로 각 서비스의 옵션을 자동으로 반영합니다.
-- 대부분의 서비스는 @lru_cache로 싱글톤(프로세스 내 1회 생성)으로 관리되어 성능과 일관성을 보장합니다.
-- 추출기/파이프라인 매니저 등은 요청마다 새 인스턴스를 생성할 수 있도록 팩토리 함수로 제공합니다.
-- clear_cached_providers() 함수로, 캐시된 싱글톤 인스턴스를 모두 초기화하여 환경변수 변경에도 즉시 반영할 수 있습니다.
+- 이미지 전처리, OCR, 라인 전처리, 건강검진 리포트 추출기 등 주요 컴포넌트 인스턴스를 관리한다.
+- 환경설정(AppConfig)을 기반으로 각 서비스의 옵션을 자동으로 반영한다.
+- 대부분의 서비스는 @lru_cache로 싱글톤으로 유지하고, 추출기는 팩토리 형식으로 제공한다.
+- clear_cached_providers()로 캐시를 초기화하여 환경 변수 변경에 즉시 대응할 수 있다.
 
-주요 기능:
-- get_config(): 환경변수 기반 앱 설정(AppConfig) 싱글톤 제공
-- get_image_preprocessor(): 이미지 전처리기 싱글톤 제공
-- get_ocr_service(): PaddleOCR 서비스 싱글톤 제공
-- get_line_preprocessor(): 라인 전처리기 싱글톤 제공
-- get_extractor(): LabTableExtractor 추출기 팩토리(설정 반영)
-- get_pipeline_manager(): OCRPipelineManager 팩토리(중앙 DI로 연결)
-- clear_cached_providers(): 모든 싱글톤 캐시 초기화(환경변수 변경 반영)
+주요 제공 함수:
+- get_config()
+- get_image_preprocessor()
+- get_ocr_service()
+- get_line_preprocessor()
+- get_lab_table_extractor()
+- get_lab_report_extractor()
+- clear_cached_providers()
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ from app.services.analysis.lab_table_extractor import LabTableExtractor, Setting
 from app.services.analysis.reference.code_lexicon import get_code_lexicon, resolve_code
 from app.services.analysis.image_preprocessor import ImagePreprocessor, Settings as ImageSettings
 from app.services.analysis.line_preprocessor import LinePreprocessor, Settings as LineSettings
-from app.services.analysis.ocr_pipeline_manager import OCRPipelineManager
+from app.services.analysis.lab_report_extractor import LabReportExtractor
 
 
 # Config provider
@@ -85,7 +84,7 @@ def get_line_preprocessor() -> LinePreprocessor:
     return LinePreprocessor(settings=settings)
 
 # Extractor provider (factory: allow different settings per request if needed)
-def get_extractor() -> LabTableExtractor:
+def get_lab_table_extractor() -> LabTableExtractor:
     """
     환경설정 기반 LabTableExtractor 추출기 인스턴스 반환 (팩토리)
     """
@@ -104,18 +103,12 @@ def get_extractor() -> LabTableExtractor:
     )
     return extractor
 
-# OCR pipeline manager provider (factory)
-def get_pipeline_manager(*, do_preprocess_default: bool = True, progress_cb=None) -> OCRPipelineManager:
-    """
-    OCRPipelineManager 인스턴스 반환 (DI로 각 컴포넌트 연결, progress 콜백 등 옵션 지원)
-    - 싱글톤 기반 컴포넌트와 새 추출기를 조합해 반환
-    """
-    return OCRPipelineManager(
-        preprocessor=get_image_preprocessor(),
-        ocr_service=get_ocr_service(),
+# Lab report extractor provider (factory)
+def get_lab_report_extractor(*, progress_cb=None) -> LabReportExtractor:
+    """LabReportExtractor 인스턴스를 생성해 반환한다."""
+    return LabReportExtractor(
         line_preproc=get_line_preprocessor(),
-        extractor=get_extractor(),
-        do_preprocess_default=do_preprocess_default,
+        extractor=get_lab_table_extractor(),
         progress_cb=progress_cb,
     )
 

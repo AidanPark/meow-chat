@@ -28,8 +28,35 @@ WEATHER_HOST="${MCP_WEATHER_API_HOST:-${MCP_HOST:-127.0.0.1}}"
 WEATHER_PORT="${MCP_WEATHER_API_PORT:-${MCP_PORT:-8001}}"
 HEALTH_HOST="${MCP_CAT_HEALTH_HOST:-${MCP_HOST:-127.0.0.1}}"
 HEALTH_PORT="${MCP_CAT_HEALTH_PORT:-${MCP_PORT:-8002}}"
-OCR_HOST="${MCP_OCR_API_HOST:-${MCP_HOST:-127.0.0.1}}"
-OCR_PORT="${MCP_OCR_API_PORT:-${MCP_PORT:-8003}}"
+CORE_HOST="${MCP_OCR_CORE_HOST:-${MCP_HOST:-127.0.0.1}}"
+CORE_PORT="${MCP_OCR_CORE_PORT:-${MCP_PORT:-8003}}"
+LAB_HOST="${MCP_EXTRACT_LAB_REPORT_HOST:-${MCP_HOST:-127.0.0.1}}"
+LAB_PORT="${MCP_EXTRACT_LAB_REPORT_PORT:-8004}"
+
+kill_processes_by_port() {
+    local port="$1"
+    local label="$2"
+    if [[ -z "$port" ]]; then
+        return
+    fi
+    local pids
+    pids=$(lsof -ti:"$port" 2>/dev/null)
+    if [[ -n "$pids" ]]; then
+        echo "⚠️ ${label} 포트(${port})가 사용 중입니다. 프로세스 종료 시도: $pids"
+        kill $pids 2>/dev/null
+        sleep 1
+        if lsof -ti:"$port" > /dev/null 2>&1; then
+            echo "   … SIGTERM 실패 → SIGKILL 시도"
+            kill -9 $pids 2>/dev/null
+            sleep 1
+        fi
+        if lsof -ti:"$port" > /dev/null 2>&1; then
+            echo "   ❌ 포트 ${port} 여전히 점유 중입니다."
+        else
+            echo "   ✅ 포트 ${port} 해제 완료"
+        fi
+    fi
+}
 
 # PID 파일에서 프로세스 ID 읽기
 if [ -f /tmp/math_server.pid ]; then
@@ -50,10 +77,16 @@ if [ -f /tmp/health_server.pid ]; then
     rm /tmp/health_server.pid
 fi
 
-if [ -f /tmp/ocr_server.pid ]; then
-    OCR_PID=$(cat /tmp/ocr_server.pid)
-    kill $OCR_PID 2>/dev/null && echo "✅ OCR API Server 종료됨 (PID: $OCR_PID)" || echo "⚠️ OCR Server 종료 실패"
-    rm /tmp/ocr_server.pid
+if [ -f /tmp/ocr_core_server.pid ]; then
+    CORE_PID=$(cat /tmp/ocr_core_server.pid)
+    kill $CORE_PID 2>/dev/null && echo "✅ OCR Core Server 종료됨 (PID: $CORE_PID)" || echo "⚠️ OCR Core 종료 실패"
+    rm /tmp/ocr_core_server.pid
+fi
+
+if [ -f /tmp/extract_lab_report_server.pid ]; then
+    LAB_PID=$(cat /tmp/extract_lab_report_server.pid)
+    kill $LAB_PID 2>/dev/null && echo "✅ Lab Report OCR Server 종료됨 (PID: $LAB_PID)" || echo "⚠️ Lab Report OCR 종료 실패"
+    rm /tmp/extract_lab_report_server.pid
 fi
 
 # 남은 프로세스들도 강제 종료
@@ -61,16 +94,25 @@ echo "🔍 남은 프로세스 정리 중..."
 pkill -f "math_utility_server.py" 2>/dev/null
 pkill -f "weather_api_server.py" 2>/dev/null
 pkill -f "cat_health_server.py" 2>/dev/null
-pkill -f "ocr_api_server.py" 2>/dev/null
+pkill -f "core_ocr_server.py" 2>/dev/null
+pkill -f "extract_lab_report_server.py" 2>/dev/null
 
 sleep 2
+
+# 포트 점유 프로세스도 정리
+kill_processes_by_port "$MATH_PORT" "Math & Utility"
+kill_processes_by_port "$WEATHER_PORT" "Weather & API"
+kill_processes_by_port "$HEALTH_PORT" "Cat Health"
+kill_processes_by_port "$CORE_PORT" "OCR Core"
+kill_processes_by_port "$LAB_PORT" "Lab Report OCR"
 
 # 포트 사용 확인
 echo "📊 포트 사용 상태 확인:"
 echo "   🧮 Math & Utility: http://${MATH_HOST}:${MATH_PORT}"
 echo "   🌤️ Weather & API:   http://${WEATHER_HOST}:${WEATHER_PORT}"
 echo "   🐱 Cat Health:      http://${HEALTH_HOST}:${HEALTH_PORT}"
-echo "   🖼️ OCR API:         http://${OCR_HOST}:${OCR_PORT}"
+echo "   🖼️ OCR Core:        http://${CORE_HOST}:${CORE_PORT}"
+echo "   🗂️ Lab Report OCR:  http://${LAB_HOST}:${LAB_PORT}"
 if lsof -ti:${MATH_PORT} > /dev/null 2>&1; then
     echo "⚠️ 포트 ${MATH_PORT}이(가) 여전히 사용 중입니다"
 else
@@ -89,10 +131,16 @@ else
     echo "✅ 포트 ${HEALTH_PORT} 해제됨"
 fi
 
-if lsof -ti:${OCR_PORT} > /dev/null 2>&1; then
-    echo "⚠️ 포트 ${OCR_PORT}이(가) 여전히 사용 중입니다"
+if lsof -ti:${CORE_PORT} > /dev/null 2>&1; then
+    echo "⚠️ 포트 ${CORE_PORT}이(가) 여전히 사용 중입니다"
 else
-    echo "✅ 포트 ${OCR_PORT} 해제됨"
+    echo "✅ 포트 ${CORE_PORT} 해제됨"
+fi
+
+if lsof -ti:${LAB_PORT} > /dev/null 2>&1; then
+    echo "⚠️ 포트 ${LAB_PORT}이(가) 여전히 사용 중입니다"
+else
+    echo "✅ 포트 ${LAB_PORT} 해제됨"
 fi
 
 echo ""

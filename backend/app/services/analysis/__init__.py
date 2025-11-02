@@ -1,9 +1,9 @@
 """Analysis services package exports."""
 
-# Re-export key analysis orchestrators/utilities for convenient imports
-from .ocr_pipeline_manager import OCRPipelineManager, create_default_ocr_pipeline_manager  # noqa: F401
+# 건강검진(혈액 검사) 리포트 추출 파이프라인
+from .lab_report_extractor import LabReportExtractor, create_default_lab_report_extractor  # noqa: F401
 
 __all__ = [
-    "OCRPipelineManager",
-    "create_default_ocr_pipeline_manager",
+    "LabReportExtractor",
+    "create_default_lab_report_extractor",
 ]

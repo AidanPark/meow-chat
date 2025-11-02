@@ -82,7 +82,7 @@ def load_mcp_server_settings(server_key: str, default_port: int, default_host: s
     4) 함수 인자의 기본값(default_host, default_port)
 
     Args:
-        server_key: 서버 식별자(e.g., 'math_utility', 'weather_api', 'cat_health', 'ocr_api')
+        server_key: 서버 식별자(e.g., 'math_utility', 'weather_api', 'cat_health', 'ocr_core', 'extract_lab_report')
         default_port: 포트 기본값
         default_host: 호스트 기본값
 
