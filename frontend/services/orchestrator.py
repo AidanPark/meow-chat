@@ -379,12 +379,21 @@ async def planner_node(state: OrchestratorState, model, client) -> OrchestratorS
     except Exception:
         available = [{"name": n} for n in (allowed or [])]
 
+    # pinned core facts가 있으면 system 컨텍스트에 함께 제공
+    pinned = None
+    try:
+        pinned = (state.get("vars") or {}).get("pinned_core_facts")
+    except Exception:
+        pinned = None
+
     sys_prompt = (
         "당신은 도구 계획자(Planner)입니다. 사용자 요청을 충족하기 위해 허용된 도구로만 \n"
         "최소한의 단계로 계획을 만들고, 반드시 JSON만 출력하세요. \n"
         "args에서는 제공된 변수들을 ${변수명} 형태로 참조할 수 있습니다(예: ${owner_id}, ${cat_id}).\n"
         "형식 예시: {\n  \"version\": 1, \n  \"steps\": [ {\"tool\": \"get_weather\", \"args\": {\"location\": \"${owner_id}\"}, \"save_as\": \"t1\" } ],\n  \"primary\": \"t1\" }\n"
     )
+    if pinned:
+        sys_prompt += f"\n[핵심 사실(요약)]:\n{str(pinned)[:1200]}\n"
     # vars 미리보기: 너무 길어지지 않도록 상위 몇 개만 노출
     vars_map = state.get("vars") or {}
     try:
@@ -592,6 +601,13 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
     except Exception:
         available = [{"name": n} for n in (allowed or [])]
 
+    # pinned core facts가 있으면 system 컨텍스트에 함께 제공
+    pinned = None
+    try:
+        pinned = (state.get("vars") or {}).get("pinned_core_facts")
+    except Exception:
+        pinned = None
+
     sys_prompt = (
         "당신은 ReAct 스타일 계획자입니다. 지금까지의 관찰과 변수(vars)를 참고하여 다음 한 단계의 action을 설계하거나,\n"
         "충분하면 종료(finish)를 제안하세요. 반드시 JSON만 출력합니다.\n\n"
@@ -600,6 +616,8 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
         "action과 finish는 동시에 제공하지 말고, 하나만 선택하세요.\n"
         "args에서는 제공된 변수들을 ${변수명} 형태로 참조할 수 있습니다(예: ${owner_id}, ${cat_id}).\n"
     )
+    if pinned:
+        sys_prompt += f"\n[핵심 사실(요약)]:\n{str(pinned)[:1200]}\n"
     try:
         import json as _json
         vars_preview = _json.dumps({k: vars_map[k] for k in list(vars_map.keys())[:8]}, ensure_ascii=False)

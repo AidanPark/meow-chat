@@ -5,7 +5,7 @@ from __future__ import annotations
 혼합 스코어링(time/importance)은 저장소에서 제공되는 경우 활용하고, 기본 구현은 유사도 중심입니다.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 from .memory_store import get_memory_store
@@ -18,11 +18,14 @@ def rewrite_query(user_message: str, summary_text: str | None) -> str:
     return user_message
 
 
-def retrieve_memories(user_id: str, user_message: str, summary_text: str | None, k: int = 8) -> List[Dict[str, Any]]:
-    """장기 메모리에서 관련 항목 Top-K를 검색합니다."""
+def retrieve_memories(user_id: str, user_message: str, summary_text: str | None, k: int = 8, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """장기 메모리에서 관련 항목 Top-K를 검색합니다.
+
+    filters: 메타데이터 기반 필터(예: {"type": "profile", "owner_id": "owner:aidan", "cat_id": "cat:momo"})
+    """
     store = get_memory_store()
     query = rewrite_query(user_message, summary_text)
-    results = store.retrieve(user_id=user_id, query=query, k=k)
+    results = store.retrieve(user_id=user_id, query=query, k=k, filters=filters)
     return results
 
 

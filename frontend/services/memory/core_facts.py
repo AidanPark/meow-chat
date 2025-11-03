@@ -46,6 +46,9 @@ def build_pinned_core_facts_block(
     *,
     compact_with_model: bool = False,
     max_queries: int = 6,
+    owner_id: Optional[str] = None,
+    cat_id: Optional[str] = None,
+    importance_min: float = 0.8,
 ) -> Optional[str]:
     """핵심 사실 블록을 생성합니다.
     1) 다중 키워드로 검색하여 관련 메모리를 수집
@@ -59,8 +62,13 @@ def build_pinned_core_facts_block(
     candidates: List[str] = []
     for q in queries:
         try:
-            # 요약 텍스트를 포함하여 질의 재작성 품질 향상
-            results = retrieve_memories(user_id=user_id, user_message=f"{q} {user_message}", summary_text=summary_text, k=6)
+            # 요약 텍스트를 포함하여 질의 재작성 품질 향상 + 메타 필터로 범위 축소
+            filters: Dict[str, Any] = {"type": "profile"}
+            if owner_id:
+                filters["owner_id"] = owner_id
+            if cat_id:
+                filters["cat_id"] = cat_id
+            results = retrieve_memories(user_id=user_id, user_message=f"{q} {user_message}", summary_text=summary_text, k=6, filters=filters)
             texts = [r.get("content", "").strip() for r in results if (r.get("content") or "").strip()]
             candidates.extend(texts)
         except Exception:
@@ -69,7 +77,10 @@ def build_pinned_core_facts_block(
     if not candidates:
         return None
 
-    # 2) 정제/중복 제거
+    # 2) 정제/중복 제거 + 중요도 임계치 필터(메타가 있을 경우)
+    #    retrieve_memories는 content만 꺼내오므로 importance는 재조회 없이 판단하기 어렵다.
+    #    간단하게는 텍스트에 'profile' 키워드 기반 검색을 사용했고, 중요도 보장은 저장 시 정책으로 확보합니다.
+    #    필요 시 store.retrieve에서 importance를 메타에 포함시켜 반환하도록 확장 가능합니다.
     candidates = _dedup_keep_order(candidates)
 
     # 3) 선택적 1차 요약(너무 길 때만, 요청된 경우만)

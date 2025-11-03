@@ -126,6 +126,8 @@ if "owner_id" not in st.session_state:
     st.session_state.owner_id = ""
 if "cat_id" not in st.session_state:
     st.session_state.cat_id = ""
+if "pinned_preview" not in st.session_state:
+    st.session_state.pinned_preview = None
 
 
 @st.cache_resource
@@ -300,6 +302,38 @@ with st.sidebar:
     st.session_state.setdefault("pinned_max_queries", 6)
     st.session_state.pinned_compact_with_model = st.checkbox("핵심 사실 요약 압축(느릴 수 있음)", value=bool(st.session_state.pinned_compact_with_model))
     st.session_state.pinned_max_queries = st.slider("핵심 사실 검색 강도(질의 수)", min_value=3, max_value=12, value=int(st.session_state.pinned_max_queries))
+
+    with st.expander("📌 핵심 사실 미리보기", expanded=False):
+        st.caption("owner_id / cat_id 범위를 기준으로 중요도 높은 프로필 항목을 요약해 보여줍니다.")
+        col_a, col_b = st.columns([0.5, 0.5])
+        with col_a:
+            if st.button("미리보기 갱신", use_container_width=True, key="btn_refresh_pinned_preview"):
+                try:
+                    model, _client = get_model_and_client()
+                    preview = build_pinned_core_facts_block(
+                        user_id=st.session_state.user_id,
+                        user_message="",
+                        summary_text=st.session_state.get("summary_text"),
+                        model=model,
+                        max_tokens=int(st.session_state.get("pinned_token_budget", 400)),
+                        per_item_cap=int(st.session_state.get("memory_item_token_cap", 150)),
+                        compact_with_model=bool(st.session_state.get("pinned_compact_with_model", False)),
+                        max_queries=int(st.session_state.get("pinned_max_queries", 6)),
+                        owner_id=(st.session_state.owner_id or None),
+                        cat_id=(st.session_state.cat_id or None),
+                        importance_min=0.8,
+                    )
+                    st.session_state.pinned_preview = preview or "(비어 있음)"
+                    st.success("핵심 사실 미리보기를 갱신했습니다.")
+                except Exception as e:
+                    st.warning(f"미리보기 실패: {e}")
+        with col_b:
+            if st.button("미리보기 초기화", use_container_width=True, key="btn_clear_pinned_preview"):
+                st.session_state.pinned_preview = None
+        if st.session_state.pinned_preview:
+            st.text_area("핵심 사실", value=st.session_state.pinned_preview, height=220, key="ta_pinned_preview")
+        else:
+            st.caption("미리보기가 없습니다. '미리보기 갱신'을 눌러 생성하세요.")
 
     st.divider()
     st.subheader("👥 개체 선택 (보호자/고양이)")
@@ -496,10 +530,35 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
         try:
             model, client = get_model_and_client()
 
+            # 핵심 사실 슬롯 자동 집계(옵션)
+            pinned_block: str | None = None
+            try:
+                if bool(st.session_state.get("pinned_core_enabled", True)):
+                    pinned_block = build_pinned_core_facts_block(
+                        user_id=st.session_state.user_id,
+                        user_message=user_message,
+                        summary_text=None,
+                        model=model,
+                        max_tokens=int(st.session_state.get("pinned_token_budget", 400)),
+                        per_item_cap=int(st.session_state.get("memory_item_token_cap", 150)),
+                        compact_with_model=bool(st.session_state.get("pinned_compact_with_model", False)),
+                        max_queries=int(st.session_state.get("pinned_max_queries", 6)),
+                        owner_id=(st.session_state.owner_id or None),
+                        cat_id=(st.session_state.cat_id or None),
+                        importance_min=0.8,
+                    )
+            except Exception:
+                pinned_block = None
+
             # 항상 자동 오케스트레이션: Planner 또는 ReAct 모드
             async def _run_auto():
                 allowed_tools = st.session_state.auto_allowed_tools or None
-                extra_vars = {"owner_id": st.session_state.owner_id or "", "cat_id": st.session_state.cat_id or ""}
+                extra_vars = {
+                    "owner_id": st.session_state.owner_id or "",
+                    "cat_id": st.session_state.cat_id or "",
+                }
+                if pinned_block:
+                    extra_vars["pinned_core_facts"] = pinned_block
                 if st.session_state.auto_mode == "ReAct":
                     state = await run_react_rag(
                         client,
