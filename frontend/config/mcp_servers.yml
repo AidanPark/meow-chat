@@ -17,3 +17,6 @@ servers:
   extract_lab_report:
     url: http://localhost:8004/sse
     transport: sse
+  memory:
+    url: http://localhost:8005/sse
+    transport: sse

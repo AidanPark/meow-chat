@@ -41,6 +41,7 @@ from services.memory.memory_writer import extract_candidates
 from services.memory.memory_utils import trim_memory_block
 from services.memory.core_facts import build_pinned_core_facts_block
 from services.memory.memory_search import search_memories, MEMORY_TYPES
+from services.orchestrator import run_auto_plan, run_react_rag
 
 # ---------------------------------------------------------------------------
 # 전체 UI 흐름 안내
@@ -109,6 +110,22 @@ if "active_profile" not in st.session_state:
     st.session_state.active_profile = st.session_state.user_id
 if "_prev_active_profile" not in st.session_state:
     st.session_state._prev_active_profile = st.session_state.active_profile
+if "auto_max_steps" not in st.session_state:
+    st.session_state.auto_max_steps = 8
+if "auto_debug_view" not in st.session_state:
+    st.session_state.auto_debug_view = False
+if "last_auto_plan_state" not in st.session_state:
+    st.session_state.last_auto_plan_state = None
+if "auto_mode" not in st.session_state:
+    st.session_state.auto_mode = "Planner"  # or "ReAct"
+if "auto_allowed_tools" not in st.session_state:
+    st.session_state.auto_allowed_tools = []
+if "react_max_iters" not in st.session_state:
+    st.session_state.react_max_iters = 4
+if "owner_id" not in st.session_state:
+    st.session_state.owner_id = ""
+if "cat_id" not in st.session_state:
+    st.session_state.cat_id = ""
 
 
 @st.cache_resource
@@ -284,6 +301,54 @@ with st.sidebar:
     st.session_state.pinned_compact_with_model = st.checkbox("핵심 사실 요약 압축(느릴 수 있음)", value=bool(st.session_state.pinned_compact_with_model))
     st.session_state.pinned_max_queries = st.slider("핵심 사실 검색 강도(질의 수)", min_value=3, max_value=12, value=int(st.session_state.pinned_max_queries))
 
+    st.divider()
+    st.subheader("👥 개체 선택 (보호자/고양이)")
+    st.session_state.owner_id = st.text_input("보호자 ID (owner_id)", value=st.session_state.owner_id, placeholder="예: owner:aidan")
+    st.session_state.cat_id = st.text_input("고양이 ID (cat_id)", value=st.session_state.cat_id, placeholder="예: cat:momo")
+
+    st.divider()
+    st.subheader("🤖 오케스트레이션 모드")
+    st.session_state.auto_mode = st.radio("모드 선택", options=["Planner", "ReAct"], horizontal=True, index=0)
+    st.session_state.auto_max_steps = st.slider("최대 스텝 수", min_value=1, max_value=16, value=int(st.session_state.auto_max_steps))
+    st.session_state.auto_debug_view = st.checkbox("디버그 보기(계획/변수/출력/오류)", value=bool(st.session_state.auto_debug_view))
+    TOOL_OPTIONS = [
+        # Memory
+        "memory_search", "memory_read", "memory_upsert",
+        # Weather
+        "get_weather", "get_forecast", "get_air_quality", "get_time_zone", "search_location",
+        # Math
+        "add", "subtract", "multiply", "divide", "convert_units", "calculate_percentage",
+        # OCR / Lab / Health (존재 시)
+        "ocr_image_file", "extract_lab_table", "analyze_cat_health",
+    ]
+    st.session_state.auto_allowed_tools = st.multiselect(
+        "허용 도구(화이트리스트)",
+        options=TOOL_OPTIONS,
+        default=[],
+        help="플래너/루프가 사용할 수 있는 도구만 허용합니다. 안전/비용 제어용",
+    )
+    if st.session_state.auto_mode == "ReAct":
+        st.session_state.react_max_iters = st.slider("ReAct 최대 반복", min_value=1, max_value=12, value=int(st.session_state.react_max_iters))
+    with st.expander("🧭 마지막 계획(요약)", expanded=False):
+        last_state = st.session_state.get("last_auto_plan_state")
+        if last_state:
+            plan = last_state.get("plan")
+            if plan:
+                st.json(plan)
+            vars_map = last_state.get("vars") or {}
+            if vars_map:
+                st.caption("vars")
+                st.json(vars_map)
+            outs = last_state.get("outputs") or {}
+            if outs:
+                st.caption("outputs")
+                st.json(outs)
+            errs = last_state.get("errors") or []
+            if errs:
+                st.caption("errors")
+                for e in errs:
+                    st.write(f"- {e}")
+
     # 환경/백엔드 배지
     import importlib.util as _import_util
     tiktoken_ok = _import_util.find_spec("tiktoken") is not None
@@ -431,46 +496,73 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
         try:
             model, client = get_model_and_client()
 
-            if saved_image_paths:
-                ocr_results = run_ocr_on_images(saved_image_paths, client)
+            # 항상 자동 오케스트레이션: Planner 또는 ReAct 모드
+            async def _run_auto():
+                allowed_tools = st.session_state.auto_allowed_tools or None
+                extra_vars = {"owner_id": st.session_state.owner_id or "", "cat_id": st.session_state.cat_id or ""}
+                if st.session_state.auto_mode == "ReAct":
+                    state = await run_react_rag(
+                        client,
+                        model,
+                        user_message,
+                        allowed_tools=allowed_tools,
+                        extra_vars=extra_vars,
+                        max_iters=int(st.session_state.react_max_iters),
+                    )
+                else:
+                    limits = {"max_steps": int(st.session_state.auto_max_steps)}
+                    state = await run_auto_plan(
+                        client,
+                        model,
+                        user_message,
+                        allowed_tools=allowed_tools,
+                        extra_vars=extra_vars,
+                        limits=limits,
+                    )
+                return state
 
-                response_entries: list[dict[str, Any]] = []
-                warnings: list[str] = []
+            try:
+                state = asyncio.run(_run_auto())
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                try:
+                    state = loop.run_until_complete(_run_auto())
+                finally:
+                    loop.close()
 
-                with st.expander("🖨️ OCR 결과", expanded=True):
-                    for path, raw in ocr_results:
-                        entry: dict[str, Any] = {"path": path}
-                        if raw:
-                            try:
-                                parsed = json.loads(raw)
-                                entry["result"] = parsed
-                                st.markdown(f"**파일**: `{path}`")
-                                st.json(parsed)
-                            except Exception:
-                                entry["raw"] = raw
-                                st.markdown(f"**파일**: `{path}`")
-                                st.text(raw)
-                        else:
-                            entry["error"] = "empty ocr result"
-                            st.markdown(f"**파일**: `{path}`")
-                            st.warning("empty ocr result")
-                        if "error" in entry and entry["error"]:
-                            warnings.append(f"- `{path}`: {entry['error']}")
-                        elif isinstance(entry.get("result"), dict) and "error" in entry["result"]:
-                            warnings.append(f"- `{path}`: {entry['result'].get('error')}")
-                        response_entries.append(entry)
-
-                if warnings:
-                    st.warning("일부 이미지에서 OCR 오류가 발생했습니다:\n" + "\n".join(warnings))
-
-                response_json = json.dumps(response_entries, ensure_ascii=False, indent=2)
-
+            # 도구 사용 기록 수집
+            tool_records = state.get("tools_used") or []
+            if tool_records:
                 now_stamp = datetime.now().strftime("%H:%M:%S")
-                for path, _ in ocr_results:
-                    st.session_state.tool_history.append({"time": now_stamp, "name": "ocr_image_file", "args": {"path": path}})
+                for rec in tool_records:
+                    name = rec.get("name") or "(unknown)"
+                    args = rec.get("args") or {}
+                    st.session_state.tool_history.append({"time": now_stamp, "name": name, "args": args})
+                st.info("🛠️ 사용된 도구: " + ", ".join([str(r.get("name")) for r in tool_records if r.get("name")]))
 
-                st.session_state.messages.append(("assistant", response_json))
-                st.stop()
+            # 메시지 출력 및 상태 저장
+            final_msg = state.get("message") or "결과가 없습니다."
+            st.session_state.messages.append(("assistant", final_msg))
+            st.markdown(final_msg)
+            st.session_state.last_auto_plan_state = state
+
+            # 디버그 뷰(옵션)
+            if bool(st.session_state.auto_debug_view):
+                with st.expander("🧪 자동 계획 디버그", expanded=False):
+                    st.caption("plan")
+                    st.json(state.get("plan") or {})
+                    st.caption("vars")
+                    st.json(state.get("vars") or {})
+                    st.caption("outputs")
+                    st.json(state.get("outputs") or {})
+                    errs = state.get("errors") or []
+                    if errs:
+                        st.caption("errors")
+                        for e in errs:
+                            st.write(f"- {e}")
+            st.stop()
+
+            # 3) 파일 업로드 인터페이스는 유지하되, OCR 자동 처리는 제거되었습니다.
 
             rec = {"tokens": [], "used_tools": set(), "tool_details": [], "final_text": None}
 

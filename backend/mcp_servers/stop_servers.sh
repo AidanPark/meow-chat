@@ -32,6 +32,8 @@ CORE_HOST="${MCP_OCR_CORE_HOST:-${MCP_HOST:-127.0.0.1}}"
 CORE_PORT="${MCP_OCR_CORE_PORT:-${MCP_PORT:-8003}}"
 LAB_HOST="${MCP_EXTRACT_LAB_REPORT_HOST:-${MCP_HOST:-127.0.0.1}}"
 LAB_PORT="${MCP_EXTRACT_LAB_REPORT_PORT:-8004}"
+MEM_HOST="${MCP_MEMORY_HOST:-${MCP_HOST:-127.0.0.1}}"
+MEM_PORT="${MCP_MEMORY_PORT:-8005}"
 
 kill_processes_by_port() {
     local port="$1"
@@ -89,6 +91,12 @@ if [ -f /tmp/extract_lab_report_server.pid ]; then
     rm /tmp/extract_lab_report_server.pid
 fi
 
+if [ -f /tmp/memory_server.pid ]; then
+    MEM_PID=$(cat /tmp/memory_server.pid)
+    kill $MEM_PID 2>/dev/null && echo "✅ Memory Server 종료됨 (PID: $MEM_PID)" || echo "⚠️ Memory Server 종료 실패"
+    rm /tmp/memory_server.pid
+fi
+
 # 남은 프로세스들도 강제 종료
 echo "🔍 남은 프로세스 정리 중..."
 pkill -f "math_utility_server.py" 2>/dev/null
@@ -96,6 +104,7 @@ pkill -f "weather_api_server.py" 2>/dev/null
 pkill -f "cat_health_server.py" 2>/dev/null
 pkill -f "core_ocr_server.py" 2>/dev/null
 pkill -f "extract_lab_report_server.py" 2>/dev/null
+pkill -f "memory_server.py" 2>/dev/null
 
 sleep 2
 
@@ -105,6 +114,7 @@ kill_processes_by_port "$WEATHER_PORT" "Weather & API"
 kill_processes_by_port "$HEALTH_PORT" "Cat Health"
 kill_processes_by_port "$CORE_PORT" "OCR Core"
 kill_processes_by_port "$LAB_PORT" "Lab Report OCR"
+kill_processes_by_port "$MEM_PORT" "Memory"
 
 # 포트 사용 확인
 echo "📊 포트 사용 상태 확인:"
@@ -113,6 +123,7 @@ echo "   🌤️ Weather & API:   http://${WEATHER_HOST}:${WEATHER_PORT}"
 echo "   🐱 Cat Health:      http://${HEALTH_HOST}:${HEALTH_PORT}"
 echo "   🖼️ OCR Core:        http://${CORE_HOST}:${CORE_PORT}"
 echo "   🗂️ Lab Report OCR:  http://${LAB_HOST}:${LAB_PORT}"
+echo "   🧠 Memory:          http://${MEM_HOST}:${MEM_PORT}"
 if lsof -ti:${MATH_PORT} > /dev/null 2>&1; then
     echo "⚠️ 포트 ${MATH_PORT}이(가) 여전히 사용 중입니다"
 else
@@ -141,6 +152,12 @@ if lsof -ti:${LAB_PORT} > /dev/null 2>&1; then
     echo "⚠️ 포트 ${LAB_PORT}이(가) 여전히 사용 중입니다"
 else
     echo "✅ 포트 ${LAB_PORT} 해제됨"
+fi
+
+if lsof -ti:${MEM_PORT} > /dev/null 2>&1; then
+    echo "⚠️ 포트 ${MEM_PORT}이(가) 여전히 사용 중입니다"
+else
+    echo "✅ 포트 ${MEM_PORT} 해제됨"
 fi
 
 echo ""

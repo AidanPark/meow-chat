@@ -11,6 +11,7 @@ pkill -f "weather_api_server.py"
 pkill -f "cat_health_server.py"
 pkill -f "core_ocr_server.py"
 pkill -f "extract_lab_report_server.py"
+pkill -f "memory_server.py"
 
 sleep 2
 
@@ -51,6 +52,8 @@ CORE_HOST="${MCP_OCR_CORE_HOST:-${MCP_HOST:-127.0.0.1}}"
 CORE_PORT="${MCP_OCR_CORE_PORT:-${MCP_PORT:-8003}}"
 LAB_HOST="${MCP_EXTRACT_LAB_REPORT_HOST:-${MCP_HOST:-127.0.0.1}}"
 LAB_PORT="${MCP_EXTRACT_LAB_REPORT_PORT:-8004}"
+MEM_HOST="${MCP_MEMORY_HOST:-${MCP_HOST:-127.0.0.1}}"
+MEM_PORT="${MCP_MEMORY_PORT:-8005}"
 
 # 각 서버를 백그라운드에서 실행
 echo "1️⃣ Math & Utility Server 시작 (${MATH_HOST}:${MATH_PORT})..."
@@ -78,6 +81,11 @@ echo "5️⃣ Lab Report OCR Server 시작 (${LAB_HOST}:${LAB_PORT})..."
 cd "$SCRIPT_DIR/lab_report"
 python extract_lab_report_server.py &
 LAB_PID=$!
+
+echo "6️⃣ Memory Server 시작 (${MEM_HOST}:${MEM_PORT})..."
+cd "$SCRIPT_DIR/memory"
+python memory_server.py &
+MEM_PID=$!
 
 # 서버 시작 대기
 echo "⏳ 서버들이 시작되기를 기다리는 중... (10초)"
@@ -116,6 +124,12 @@ else
     echo "❌ Lab Report OCR Server (${LAB_HOST}:${LAB_PORT}) - 오류"
 fi
 
+if curl -s http://${MEM_HOST}:${MEM_PORT}/health > /dev/null 2>&1; then
+    echo "✅ Memory Server (${MEM_HOST}:${MEM_PORT}) - 정상"
+else
+    echo "❌ Memory Server (${MEM_HOST}:${MEM_PORT}) - 오류"
+fi
+
 echo ""
 echo "🎉 Multi-MCP Server 시스템이 실행되었습니다!"
 echo ""
@@ -125,6 +139,7 @@ echo "   🌤️ Weather & API:   http://${WEATHER_HOST}:${WEATHER_PORT}"
 echo "   🐱 Cat Health:      http://${HEALTH_HOST}:${HEALTH_PORT}"
 echo "   🖼️ OCR Core:        http://${CORE_HOST}:${CORE_PORT}"
 echo "   🗂️ Lab Report OCR:  http://${LAB_HOST}:${LAB_PORT}"
+echo "   🧠 Memory:          http://${MEM_HOST}:${MEM_PORT}"
 echo ""
 echo "🚀 클라이언트 실행 방법:"
 echo "   streamlit run frontend/app.py"
@@ -140,6 +155,7 @@ echo "   Weather Server PID: $WEATHER_PID"
 echo "   Health Server PID: $HEALTH_PID"
 echo "   OCR Core PID:     $CORE_PID"
 echo "   Lab OCR PID:      $LAB_PID"
+echo "   Memory PID:       $MEM_PID"
 
 # PID 정보를 파일에 저장 (종료시 사용)
 echo "$MATH_PID" > /tmp/math_server.pid
@@ -147,6 +163,7 @@ echo "$WEATHER_PID" > /tmp/weather_server.pid
 echo "$HEALTH_PID" > /tmp/health_server.pid
 echo "$CORE_PID" > /tmp/ocr_core_server.pid
 echo "$LAB_PID" > /tmp/extract_lab_report_server.pid
+echo "$MEM_PID" > /tmp/memory_server.pid
 
 echo ""
 echo "💡 팁: 로그를 보려면 각 서버 디렉토리에서 로그 파일을 확인하세요."
