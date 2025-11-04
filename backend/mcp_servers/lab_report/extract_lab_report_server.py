@@ -51,8 +51,26 @@ mcp.settings.port = _port
 
 
 @mcp.tool()
-async def extract_lab_report(ocr_results: Sequence[str]) -> str:
-    """OCR 결과 JSON 목록을 받아 추출/병합 결과 JSON을 반환합니다."""
+async def extract_lab_report(ocr_results: Sequence[Any]) -> str:
+    """혈액검사 결과지의 OCR 출력들을 구조화하여 MergeEnvelope(JSON)로 반환합니다.
+
+    목적:
+    - OCR로 얻은 검사 결과 텍스트를 해석/정규화하여 주요 임상 지표를 추출하고 병합합니다.
+
+    입력:
+    - ocr_results: OCRResultEnvelope(JSON 문자열)들의 시퀀스. 여러 페이지/이미지를 한 번에 전달할 수 있습니다.
+      (서버 구현상 dict 형태도 허용되며, {"ocr_result": <JSON>, "path": <str>} 같이 전달된 경우 내부에서 처리합니다.)
+
+    출력:
+    - MergeEnvelope(JSON 문자열). RBC/HCT/HGB/WBC 등 핵심 수치 및 메타를 포함합니다.
+
+    적합한 상황:
+    - 검사 결과지 텍스트가 이미 확보되어 있고, 구조화/요약/이상치 파악이 필요한 경우
+
+    사전조건/관계:
+    - 이미지로부터 텍스트가 필요하면 먼저 OCR 도구(ocr_image_file)를 사용해 OCRResultEnvelope(JSON)를 확보하세요.
+    - 그 다음 이 도구에 해당 JSON 문자열 리스트를 입력으로 전달하면 됩니다.
+    """
     if not isinstance(ocr_results, Sequence) or not ocr_results:
         return json.dumps({"error": "ocr_results must be a non-empty list"}, ensure_ascii=False)
 

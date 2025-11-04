@@ -342,7 +342,7 @@ with st.sidebar:
         # Math
         "add", "subtract", "multiply", "divide", "convert_units", "calculate_percentage",
         # OCR / Lab / Health (존재 시)
-        "ocr_image_file", "extract_lab_table", "analyze_cat_health",
+        "ocr_image_file", "extract_lab_report", "extract_lab_table", "analyze_cat_health",
     ]
     st.session_state.auto_allowed_tools = st.multiselect(
         "허용 도구(화이트리스트)",

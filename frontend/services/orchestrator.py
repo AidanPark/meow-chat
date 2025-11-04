@@ -406,9 +406,13 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
                 continue
             if allowed and name not in allowed:
                 continue
-            available.append({"name": name})
+            desc = getattr(t, "description", None)
+            # 설명은 너무 길 경우 앞부분만 사용
+            if isinstance(desc, str) and len(desc) > 260:
+                desc = desc[:260] + "…"
+            available.append({"name": name, "desc": desc or ""})
     except Exception:
-        available = [{"name": n} for n in (allowed or [])]
+        available = [{"name": n, "desc": ""} for n in (allowed or [])]
 
     # pinned core facts가 있으면 system 컨텍스트에 함께 제공
     pinned = None
@@ -425,6 +429,13 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
         "action과 finish는 동시에 제공하지 말고, 하나만 선택하세요.\n"
         "args에서는 제공된 변수들을 ${변수명} 형태로 참조할 수 있습니다(예: ${owner_id}, ${cat_id}).\n"
     )
+    # 도구 선택 규칙 힌트(절차 강제가 아닌 선택 원칙)
+    sys_prompt += (
+        "\n[도구 선택 규칙]\n"
+        "- 이미지 첨부가 있고 검사/혈액/수치/결과지 분석이 필요하면, 우선 이미지에서 텍스트를 확보하세요(예: ocr_image_file).\n"
+        "- 검사 결과를 구조화/해석하려면, OCR 결과(OCRResultEnvelope JSON)를 구조화 도구에 입력하세요(예: extract_lab_report).\n"
+        "- 실패 시 가능한 정보로 응답하고, 의료 조언은 정보 제공용임을 명시하세요.\n"
+    )
     if pinned:
         sys_prompt += f"\n[핵심 사실(요약)]:\n{str(pinned)[:1200]}\n"
     try:
@@ -433,9 +444,21 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
     except Exception:
         vars_preview = str(list(vars_map.keys())[:8])
 
+    # 도구 카탈로그(이름 + 간단 설명) 제공
+    tool_lines = []
+    try:
+        for a in (available or [])[:24]:
+            nm = a.get("name")
+            ds = a.get("desc") or ""
+            if nm:
+                line = f"- {nm}: {ds}" if ds else f"- {nm}"
+                tool_lines.append(line)
+    except Exception:
+        pass
+
     user_prompt = (
         f"요청: {user_req}\n"
-        f"허용 도구: {', '.join([a['name'] for a in available]) if available else '(없음)'}\n"
+        f"허용 도구 목록:\n" + ("\n".join(tool_lines) if tool_lines else "(없음)") + "\n\n"
         f"반복번호: {iter_no}\n"
         f"사용 가능한 변수: {vars_preview}\n"
         f"history 길이: {len(history)}\n"

@@ -35,7 +35,7 @@ jupyter lab
 주요 경로:
 - 백엔드 앱 패키지: `backend/app` (임포트 경로는 그대로 `app.*` 유지; 백엔드를 작업 디렉터리 또는 PYTHONPATH에 추가해야 합니다)
 - MCP 서버: `backend/mcp_servers`
-- 설정/데이터/테스트: `backend/config`, `backend/data`, `backend/tests`
+- 설정/데이터/테스트: `backend/config`, `backend/data`, `tests`
 
 Jupyter는 `backend/start_jupyter.sh`로 실행하면 자동으로 `backend` 디렉터리에서 시작됩니다.
 

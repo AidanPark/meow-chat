@@ -132,7 +132,26 @@ def _run_ocr_pipeline(image_bytes: bytes, do_preprocess: bool, debug: bool) -> O
 
 @mcp.tool()
 async def ocr_image_file(paths: Sequence[str], do_preprocess: bool = True, debug: bool = False) -> List[dict]:
-    """여러 이미지 경로를 받아 OCR 결과(envelope JSON)를 반환합니다."""
+    """이미지에서 텍스트를 추출해 OCRResultEnvelope(JSON)를 반환합니다.
+
+    목적:
+    - 검사 결과지 등 이미지에 포함된 텍스트(표/수치 포함)를 추출합니다.
+
+    입력:
+    - paths: 이미지 경로들의 시퀀스(str). 한 장 이상 허용합니다.
+    - do_preprocess: 전처리 사용 여부(기본값 True)
+    - debug: 디버그 모드(기본값 False)
+
+    출력:
+    - 각 입력 파일마다 dict 1개를 반환합니다.
+      {"path": <str>, "ocr_result": <OCRResultEnvelope JSON 문자열>} 또는 {"path": <str>, "error": <메시지>}
+
+    적합한 상황:
+    - 이미지에서 텍스트를 먼저 확보해야 하는 경우(검사 결과지, 표, 수치 등)
+
+    후속 활용:
+    - 반환된 OCRResultEnvelope(JSON 문자열)는 검사 리포트 구조화 도구(extract_lab_report)의 입력으로 그대로 사용할 수 있습니다.
+    """
     if isinstance(paths, str):  # type: ignore[arg-type]
         paths = [paths]  # pragma: no cover
 
