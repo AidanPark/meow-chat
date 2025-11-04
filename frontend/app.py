@@ -13,14 +13,12 @@ from datetime import datetime
 import io
 import json
 import streamlit as st
-from typing import Any
 
 # MCP 서버와 연결하는 LangChain 어댑터
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
 from dotenv import load_dotenv, find_dotenv
-from ruamel.yaml import YAML
 
 # 동일 경로의 모듈을 우선 임포트할 수 있도록 sys.path 정비
 CURRENT_DIR = os.path.dirname(__file__)
@@ -32,16 +30,12 @@ UPLOAD_ROOT = os.path.join(CURRENT_DIR, "uploads")
 # 프론트엔드 서비스/설정 모듈
 from config.loader import load_mcp_server_config
 from config.defaults import RECENT_TURN_WINDOW, SUMMARIZE_TRIGGER_TURNS, RETRIEVAL_TOP_K
-from services.streaming import stream_agent_generator, stream_react_rag_generator
-from services.context_builder import build_context_messages
-from services.summarizer import maybe_update_summary
+from services.streaming import stream_react_rag_generator
 from ui.styles import inject_core_css
-from services.memory.memory_retriever import retrieve_memories, write_memories
-from services.memory.memory_writer import extract_candidates
-from services.memory.memory_utils import trim_memory_block
+# Legacy memory helpers no longer needed in app-level pipeline (kept server-side)
 from services.memory.core_facts import build_pinned_core_facts_block
 from services.memory.memory_search import search_memories, MEMORY_TYPES
-from services.orchestrator import run_react_rag
+# from services.orchestrator import run_react_rag  # no longer imported here
 
 # ---------------------------------------------------------------------------
 # 전체 UI 흐름 안내
@@ -71,6 +65,28 @@ inject_core_css()
 # MCP 서버 설정 불러오기
 SERVERS = load_mcp_server_config()
 
+# 공통: 사이드바 업로드 위젯의 X 버튼 동작을 모사하는 초기화 함수
+def _uploader_key() -> str:
+    return f"sidebar_image_uploader_{st.session_state.get('_uploader_nonce', 0)}"
+
+def _clear_sidebar_uploader_state():
+    # 위젯 상태 자체를 제거하여 다음 렌더에서 완전히 초기화되도록 함
+    try:
+        curr_key = _uploader_key()
+        st.session_state.pop(curr_key, None)
+    except Exception:
+        pass
+    # 내부 보관 리스트도 함께 초기화
+    st.session_state.uploaded_images = []
+    st.session_state.previous_uploaded_count = 0
+    # 새 키로 리마운트되도록 nonce 증가
+    st.session_state["_uploader_nonce"] = int(st.session_state.get("_uploader_nonce", 0)) + 1
+    # 디버그 로그
+    try:
+        print(f"[DEBUG] _clear_sidebar_uploader_state(): cleared, new _uploader_nonce={st.session_state.get('_uploader_nonce')}")
+    except Exception:
+        pass
+
 # 세션 상태 기본값 초기화
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -94,6 +110,8 @@ if "last_retrieved_memories" not in st.session_state:
     st.session_state.last_retrieved_memories = []
 if "last_saved_memory_ids" not in st.session_state:
     st.session_state.last_saved_memory_ids = []
+if "last_saved_memories" not in st.session_state:
+    st.session_state.last_saved_memories = []
 if "memory_token_budget" not in st.session_state:
     st.session_state.memory_token_budget = 1200
 if "memory_item_token_cap" not in st.session_state:
@@ -120,6 +138,14 @@ if "cat_id" not in st.session_state:
     st.session_state.cat_id = ""
 if "pinned_preview" not in st.session_state:
     st.session_state.pinned_preview = None
+if "_uploader_nonce" not in st.session_state:
+    st.session_state._uploader_nonce = 0
+if "summary_text" not in st.session_state:
+    st.session_state.summary_text = None
+
+# 사이드바 진행 로그용 플레이스홀더 (동일 런에서 실시간 업데이트)
+from typing import Any as _Any
+progress_logs_area: _Any = None
 
 
 @st.cache_resource
@@ -214,27 +240,67 @@ with st.sidebar:
         "대화에 첨부할 이미지",
         type=["png", "jpg", "jpeg", "gif", "webp"],
         accept_multiple_files=True,
-        key="sidebar_image_uploader",
+        key=_uploader_key(),
     )
     if uploaded_files:
-        previous_names = [getattr(img, "name", "") for img in st.session_state.uploaded_images]
         stored: list[io.BytesIO] = []
-        current_names: list[str] = []
         for file in uploaded_files:
             data = file.getvalue()
             buf = io.BytesIO(data)
             buf.name = file.name  # type: ignore[attr-defined]
             stored.append(buf)
-            current_names.append(file.name)
         st.session_state.uploaded_images = stored
         st.session_state.previous_uploaded_count = len(stored)
         # 별도 안내 메시지는 띄우지 않고 입력창 프롬프트에서 첨부 현황을 확인하도록 한다.
     else:
         if st.session_state.uploaded_images:
-            st.session_state.uploaded_images = []
-            st.session_state.previous_uploaded_count = 0
+            _clear_sidebar_uploader_state()
 
-    # 첨부 초기화 버튼은 제거함 (사용자는 새로 업로드하거나 새 프로필/세션으로 리셋 가능)
+    # 진행 로그(최근) - 고정 영역 스크롤 표시 (이미지 업로드 바로 아래)
+    st.subheader("🔎 진행 로그")
+    logs = st.session_state.get("last_progress_logs", [])
+    progress_logs_area = st.empty()
+    def _render_progress(_logs: list[str]):
+        text = "\n".join([str(x) for x in _logs[-200:]]) if _logs else ""
+        try:
+            progress_logs_area.text_area(
+                label="진행 로그",
+                value=text,
+                height=200,
+                key="ta_progress_logs",
+                label_visibility="collapsed",
+            )
+        except Exception:
+            progress_logs_area.text_area(
+                label="진행 로그",
+                value=text,
+                height=200,
+                key="ta_progress_logs_fallback",
+            )
+    _render_progress(logs)
+
+    # 수동 첨부 초기화 버튼 제거 (자동 초기화 및 분석 성공 시 초기화만 유지)
+
+    # 🤖 오케스트레이션: 진행 로그 바로 아래로 이동
+    st.divider()
+    st.subheader("🤖 오케스트레이션 (ReAct)")
+    TOOL_OPTIONS = [
+        # Memory
+        "memory_search", "memory_read", "memory_upsert",
+        # Weather
+        "get_weather", "get_forecast", "get_air_quality", "get_time_zone", "search_location",
+        # Math
+        "add", "subtract", "multiply", "divide", "convert_units", "calculate_percentage",
+        # Lab / Health (존재 시)
+        "extract_lab_report", "extract_lab_table", "analyze_cat_health",
+    ]
+    st.session_state.auto_allowed_tools = st.multiselect(
+        "허용 도구(화이트리스트)",
+        options=TOOL_OPTIONS,
+        default=[],
+        help="플래너/루프가 사용할 수 있는 도구만 허용합니다. 안전/비용 제어용",
+    )
+    st.session_state.react_max_iters = st.slider("ReAct 최대 반복", min_value=1, max_value=12, value=int(st.session_state.react_max_iters))
 
     st.divider()
 
@@ -289,48 +355,8 @@ with st.sidebar:
     st.session_state.owner_id = st.text_input("보호자 ID (owner_id)", value=st.session_state.owner_id, placeholder="예: owner:aidan")
     st.session_state.cat_id = st.text_input("고양이 ID (cat_id)", value=st.session_state.cat_id, placeholder="예: cat:momo")
 
-    st.divider()
-    st.subheader("🤖 오케스트레이션 (ReAct)")
-    TOOL_OPTIONS = [
-        # Memory
-        "memory_search", "memory_read", "memory_upsert",
-        # Weather
-        "get_weather", "get_forecast", "get_air_quality", "get_time_zone", "search_location",
-        # Math
-        "add", "subtract", "multiply", "divide", "convert_units", "calculate_percentage",
-    # Lab / Health (존재 시)
-    "extract_lab_report", "extract_lab_table", "analyze_cat_health",
-    ]
-    st.session_state.auto_allowed_tools = st.multiselect(
-        "허용 도구(화이트리스트)",
-        options=TOOL_OPTIONS,
-        default=[],
-        help="플래너/루프가 사용할 수 있는 도구만 허용합니다. 안전/비용 제어용",
-    )
-    st.session_state.react_max_iters = st.slider("ReAct 최대 반복", min_value=1, max_value=12, value=int(st.session_state.react_max_iters))
+    # 진행 로그(최근) - 고정 영역 스크롤 표시
 
-    # 환경/백엔드 배지
-    import importlib.util as _import_util
-    tiktoken_ok = _import_util.find_spec("tiktoken") is not None
-    chroma_ok = _import_util.find_spec("chromadb") is not None
-    st.markdown("---")
-    st.subheader("🧩 환경 상태")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.caption("Vector Store")
-        st.markdown(f"- {'🟢' if chroma_ok else '🔴'} Chroma")
-        st.caption("Persist dir: data/vectors/")
-    with col_b:
-        st.caption("Tokenizer")
-        st.markdown(f"- {'🟢' if tiktoken_ok else '🔴'} tiktoken")
-
-    with st.expander("🧠 메모리 상태", expanded=False):
-        last_ret = st.session_state.get("last_retrieved_memories", [])
-        last_saved = st.session_state.get("last_saved_memory_ids", [])
-        st.caption(f"최근 검색된 메모리: {len(last_ret)}개")
-        for m in last_ret[:5]:
-            st.write(f"- {m}")
-        st.caption(f"최근 저장된 메모리: {len(last_saved)}개")
 
     st.divider()
     with st.expander("📜 타임라인 · 메모리 검색", expanded=False):
@@ -389,6 +415,54 @@ with st.sidebar:
                 st.session_state.manual_injected_memories = []
                 st.session_state.mem_search_results = []
                 st.info("선택과 결과를 초기화했습니다.")
+
+    # 맨 아래: 환경 상태 + 메모리 상태
+    st.divider()
+    # 환경/백엔드 배지
+    import importlib.util as _import_util
+    tiktoken_ok = _import_util.find_spec("tiktoken") is not None
+    chroma_ok = _import_util.find_spec("chromadb") is not None
+    st.subheader("🧩 환경 상태")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.caption("Vector Store")
+        st.markdown(f"- {'🟢' if chroma_ok else '🔴'} Chroma")
+        st.caption("Persist dir: data/vectors/")
+    with col_b:
+        st.caption("Tokenizer")
+        st.markdown(f"- {'🟢' if tiktoken_ok else '🔴'} tiktoken")
+
+    with st.expander("🧠 메모리 상태", expanded=False):
+        last_ret = st.session_state.get("last_retrieved_memories", [])
+        last_saved = st.session_state.get("last_saved_memory_ids", [])
+        st.caption(f"최근 검색된 메모리: {len(last_ret)}개")
+        for m in last_ret[:5]:
+            st.write(f"- {m}")
+        st.caption(f"최근 저장된 메모리: {len(last_saved)}개")
+        # 최근 저장된 메모리 상세 표시 (검사결과는 날짜만 간단히 표시)
+        saved_items = st.session_state.get("last_saved_memories", [])
+        if saved_items:
+            st.caption("최근 저장 항목 미리보기:")
+            for it in saved_items[-5:]:  # 최근 5개
+                try:
+                    if isinstance(it, dict):
+                        t = it.get("type") or ""
+                        if t == "lab_report":
+                            dates = it.get("dates") or []
+                            dates_txt = ", ".join([str(d) for d in dates]) if dates else "(날짜 없음)"
+                            st.write(f"- [LabReport] {dates_txt}")
+                        else:
+                            content = (it.get("content") or it.get("text") or "").strip()
+                            if content and len(content) > 120:
+                                content = content[:120] + "…"
+                            if content:
+                                st.write(f"- [{t or 'memo'}] {content}")
+                            else:
+                                st.write(f"- [{t or 'memo'}]")
+                    else:
+                        st.write(f"- {str(it)[:120]}")
+                except Exception:
+                    pass
 
 
 # 대화 메시지 영역 렌더링
@@ -477,188 +551,109 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
                 pinned_block = None
 
             # 항상 ReAct 스트리밍 오케스트레이션
-                # 스트리밍 방식으로 ReAct 실행
-                allowed_tools = st.session_state.auto_allowed_tools or None
-                extra_vars = {
-                    "owner_id": st.session_state.owner_id or "",
-                    "cat_id": st.session_state.cat_id or "",
-                }
-                if pinned_block:
-                    extra_vars["pinned_core_facts"] = pinned_block
-
-                rec = {"tokens": [], "used_tools": set(), "tool_details": [], "final_text": None}
-                text_stream = stream_react_rag_generator(
-                    user_request=user_message,
-                    rec=rec,
-                    model=model,
-                    client=client,
-                    allowed_tools=allowed_tools,
-                    max_iters=int(st.session_state.react_max_iters),
-                    extra_vars=extra_vars,
-                )
-                # 첫 토큰이 나타날 때까지는 동그라미 스피너만 보여주고,
-                # 첫 토큰 이후에는 기존처럼 채팅 영역에 바로 스트리밍되도록 처리
-                first_chunk = None
-                with st.spinner("생각 중…"):
-                    try:
-                        first_chunk = next(text_stream)
-                    except StopIteration:
-                        first_chunk = None
-
-                def _chain_first(gen, first):
-                    if first is not None:
-                        yield first
-                    for chunk in gen:
-                        yield chunk
-
-                final_text = st.write_stream(_chain_first(text_stream, first_chunk))
-
-                now = datetime.now().strftime("%H:%M:%S")
-                for d in rec.get("tool_details", []):
-                    st.session_state.tool_history.append({"time": now, **d})
-                used_tools = list(rec.get("used_tools") or [])
-                if used_tools:
-                    st.info(f"🛠️ 사용된 도구: {', '.join(str(x) for x in used_tools)}")
-
-                final_str = final_text if isinstance(final_text, str) else (rec.get("final_text") or "")
-                st.session_state.messages.append(("assistant", final_str))
-                st.stop()
-
-            # 3) 파일 업로드 인터페이스는 유지하되, OCR 자동 처리는 제거되었습니다.
+            # 스트리밍 방식으로 ReAct 실행
+            allowed_tools = st.session_state.auto_allowed_tools or None
+            extra_vars = {
+                "owner_id": st.session_state.owner_id or "",
+                "cat_id": st.session_state.cat_id or "",
+                "user_id": st.session_state.user_id or os.getenv("USER", "default"),
+            }
+            if pinned_block:
+                extra_vars["pinned_core_facts"] = pinned_block
 
             rec = {"tokens": [], "used_tools": set(), "tool_details": [], "final_text": None}
-
-            summary = st.session_state.get("summary_text")
-            rt_window = int(st.session_state.recent_turn_window)
-            sum_trig = int(st.session_state.summarize_trigger_turns)
-            summary, pruned_messages = maybe_update_summary(
-                summary,
-                st.session_state.messages,
-                recent_turn_window=rt_window,
-                summarize_trigger_turns=sum_trig,
+            text_stream = stream_react_rag_generator(
+                user_request=user_message,
+                rec=rec,
                 model=model,
+                client=client,
+                allowed_tools=allowed_tools,
+                max_iters=int(st.session_state.react_max_iters),
+                extra_vars=extra_vars,
             )
-            st.session_state.summary_text = summary
-            st.session_state.messages = pruned_messages
-
-            user_id = st.session_state.user_id
-            retrieved_texts: list[str] = []
-            pinned_text: str | None = None
-            if st.session_state.use_memory and st.session_state.pinned_core_enabled:
-                try:
-                    now_ts = time.time()
-                    cache = st.session_state.get("_pinned_cache", {})
-                    cache_uid = f"{user_id}"
-                    cache_ok = (
-                        isinstance(cache, dict)
-                        and cache.get("user_id") == cache_uid
-                        and (now_ts - float(cache.get("ts", 0))) < 60.0
-                        and cache.get("settings") == {
-                            "max_tokens": int(st.session_state.pinned_token_budget),
-                            "per_item_cap": int(st.session_state.memory_item_token_cap),
-                            "compact": bool(st.session_state.pinned_compact_with_model),
-                            "max_queries": int(st.session_state.pinned_max_queries),
-                        }
-                    )
-                    if cache_ok:
-                        pinned_text = cache.get("text")
-                    else:
-                        pinned_text = build_pinned_core_facts_block(
-                            user_id=user_id,
-                            user_message=user_message,
-                            summary_text=summary,
-                            model=model,
-                            max_tokens=int(st.session_state.pinned_token_budget),
-                            per_item_cap=int(st.session_state.memory_item_token_cap),
-                            compact_with_model=bool(st.session_state.pinned_compact_with_model),
-                            max_queries=int(st.session_state.pinned_max_queries),
-                        )
-                        st.session_state._pinned_cache = {
-                            "user_id": cache_uid,
-                            "ts": now_ts,
-                            "text": pinned_text,
-                            "settings": {
-                                "max_tokens": int(st.session_state.pinned_token_budget),
-                                "per_item_cap": int(st.session_state.memory_item_token_cap),
-                                "compact": bool(st.session_state.pinned_compact_with_model),
-                                "max_queries": int(st.session_state.pinned_max_queries),
-                            },
-                        }
-                except Exception:
-                    pinned_text = None
-            if st.session_state.use_memory:
-                try:
-                    retrieved_items = retrieve_memories(user_id=user_id, user_message=user_message, summary_text=summary, k=int(st.session_state.retrieval_top_k))
-                    retrieved_texts = [it.get("content", "").strip() for it in retrieved_items if (it.get("content") or "").strip()]
-                    retrieved_texts = trim_memory_block(
-                        texts=retrieved_texts,
-                        max_tokens=int(st.session_state.memory_token_budget),
-                        per_item_token_cap=int(st.session_state.memory_item_token_cap),
-                    )
-                except Exception:
-                    retrieved_texts = []
-
-            manual = st.session_state.get("manual_injected_memories", [])
-            if manual:
-                seen = set()
-                merged: list[str] = []
-                for it in manual + retrieved_texts:
-                    k = it.strip()
-                    if not k or k in seen:
-                        continue
-                    seen.add(k)
-                    merged.append(k)
-                retrieved_texts = merged
-            st.session_state.last_retrieved_memories = retrieved_texts
-
-            lc_messages = build_context_messages(
-                summary_text=summary,
-                history_messages=st.session_state.messages,
-                new_user_message=user_message,
-                recent_turn_window=rt_window,
-                retrieved_memories=(retrieved_texts or None) if st.session_state.use_memory else None,
-                pinned_core_facts=pinned_text if (st.session_state.use_memory and st.session_state.pinned_core_enabled) else None,
-            )
-
-            # 일반 스트리밍 경로에도 동일한 스피너 적용: 첫 토큰 전까지만 스피너 표시
-            _gen = stream_agent_generator(lc_messages, rec, model, client)
-
-            first_chunk2 = None
+            # 첫 토큰이 나타날 때까지는 동그라미 스피너만 보여주고,
+            # 첫 토큰 이후에는 기존처럼 채팅 영역에 바로 스트리밍되도록 처리
+            first_chunk = None
             with st.spinner("생각 중…"):
                 try:
-                    first_chunk2 = next(_gen)
+                    first_chunk = next(text_stream)
                 except StopIteration:
-                    first_chunk2 = None
+                    first_chunk = None
 
-            def _chain_first2(gen, first):
+            def _chain_first(gen, first):
                 if first is not None:
                     yield first
                 for chunk in gen:
                     yield chunk
 
-            text = st.write_stream(_chain_first2(_gen, first_chunk2))
+            # 스트림을 소비하면서 사이드바 진행 로그를 실시간 갱신
+            def _wrap_with_progress(gen):
+                for chunk in gen:
+                    # 진행 로그가 쌓였으면 사이드바 갱신
+                    try:
+                        if rec.get("progress_logs"):
+                            st.session_state["last_progress_logs"] = list(rec.get("progress_logs") or [])[-200:]
+                            # 렌더 함수가 존재하면 갱신
+                            if 'progress_logs_area' in globals() and progress_logs_area is not None:
+                                logs_now = st.session_state.get("last_progress_logs", [])
+                                # 텍스트 영역 재렌더
+                                try:
+                                    progress_logs_area.text_area(
+                                        label="진행 로그",
+                                        value="\n".join([str(x) for x in logs_now[-200:]]),
+                                        height=200,
+                                        key="ta_progress_logs",
+                                        label_visibility="collapsed",
+                                    )
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    yield chunk
+
+            final_text = st.write_stream(_wrap_with_progress(_chain_first(text_stream, first_chunk)))
 
             now = datetime.now().strftime("%H:%M:%S")
-            for d in rec["tool_details"]:
+            for d in rec.get("tool_details", []):
                 st.session_state.tool_history.append({"time": now, **d})
-
-            used_tools = list(rec["used_tools"]) if rec.get("used_tools") else []
+            used_tools = list(rec.get("used_tools") or [])
             if used_tools:
-                st.info(f"🛠️ 사용된 도구: {', '.join(used_tools)}")
+                st.info(f"🛠️ 사용된 도구: {', '.join(str(x) for x in used_tools)}")
+            # 진행 로그를 사이드바 표시용 세션 상태에 저장
+            try:
+                if rec.get("progress_logs"):
+                    st.session_state["last_progress_logs"] = list(rec.get("progress_logs") or [])[-200:]
+            except Exception:
+                pass
 
-            final_str = text if isinstance(text, str) else (rec.get("final_text") or "")
+            final_str = final_text if isinstance(final_text, str) else (rec.get("final_text") or "")
+            # 최근 저장된 메모리 목록에 반영 (먼저 처리)
+            try:
+                if rec.get("saved_memories"):
+                    cur = list(st.session_state.get("last_saved_memories", []))
+                    cur.extend(rec.get("saved_memories") or [])
+                    st.session_state.last_saved_memories = cur[-50:]
+            except Exception:
+                pass
+            # 답변을 세션 메시지에 먼저 반영
             st.session_state.messages.append(("assistant", final_str))
-
-            if st.session_state.use_memory:
+            # 디버그: 저장 플래그 상태 출력
+            try:
+                print("[DEBUG] rec.lab_report_saved=", rec.get("lab_report_saved"), "| saved_memories_len=", len(rec.get("saved_memories") or []))
+            except Exception:
+                pass
+            # 검사결과 저장 성공 시: 업로더 완전 초기화 + 즉시 리렌더
+            if rec.get("lab_report_saved"):
                 try:
-                    candidates = extract_candidates(recent_turns=st.session_state.messages, assistant_reply=final_str, model=model)
-                    if candidates:
-                        saved_ids = write_memories(user_id=user_id, memories=candidates)
-                        st.session_state.last_saved_memory_ids = saved_ids
-                        if saved_ids:
-                            st.caption(f"🧠 장기 메모리 {len(saved_ids)}개 저장됨")
+                    print("[DEBUG] Entering lab_report_saved clear path. _uploader_nonce(before)=", st.session_state.get("_uploader_nonce"))
                 except Exception:
                     pass
+                _clear_sidebar_uploader_state()
+                st.info("검사결과 저장 완료. 첨부 이미지 목록을 초기화했습니다.")
+                st.rerun()
+            st.stop()
+
+            # 이하 레거시 파이프라인 코드는 st.stop() 이후로 도달하지 않으므로 제거되었습니다.
 
         except Exception as e:
             err = f"오류가 발생했습니다: {e}"
