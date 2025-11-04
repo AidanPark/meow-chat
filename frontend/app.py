@@ -32,7 +32,7 @@ UPLOAD_ROOT = os.path.join(CURRENT_DIR, "uploads")
 # 프론트엔드 서비스/설정 모듈
 from config.loader import load_mcp_server_config
 from config.defaults import RECENT_TURN_WINDOW, SUMMARIZE_TRIGGER_TURNS, RETRIEVAL_TOP_K
-from services.streaming import stream_agent_generator
+from services.streaming import stream_agent_generator, stream_react_rag_generator
 from services.context_builder import build_context_messages
 from services.summarizer import maybe_update_summary
 from ui.styles import inject_core_css
@@ -41,7 +41,7 @@ from services.memory.memory_writer import extract_candidates
 from services.memory.memory_utils import trim_memory_block
 from services.memory.core_facts import build_pinned_core_facts_block
 from services.memory.memory_search import search_memories, MEMORY_TYPES
-from services.orchestrator import run_auto_plan, run_react_rag
+from services.orchestrator import run_react_rag
 
 # ---------------------------------------------------------------------------
 # 전체 UI 흐름 안내
@@ -110,14 +110,6 @@ if "active_profile" not in st.session_state:
     st.session_state.active_profile = st.session_state.user_id
 if "_prev_active_profile" not in st.session_state:
     st.session_state._prev_active_profile = st.session_state.active_profile
-if "auto_max_steps" not in st.session_state:
-    st.session_state.auto_max_steps = 8
-if "auto_debug_view" not in st.session_state:
-    st.session_state.auto_debug_view = False
-if "last_auto_plan_state" not in st.session_state:
-    st.session_state.last_auto_plan_state = None
-if "auto_mode" not in st.session_state:
-    st.session_state.auto_mode = "Planner"  # or "ReAct"
 if "auto_allowed_tools" not in st.session_state:
     st.session_state.auto_allowed_tools = []
 if "react_max_iters" not in st.session_state:
@@ -341,10 +333,7 @@ with st.sidebar:
     st.session_state.cat_id = st.text_input("고양이 ID (cat_id)", value=st.session_state.cat_id, placeholder="예: cat:momo")
 
     st.divider()
-    st.subheader("🤖 오케스트레이션 모드")
-    st.session_state.auto_mode = st.radio("모드 선택", options=["Planner", "ReAct"], horizontal=True, index=0)
-    st.session_state.auto_max_steps = st.slider("최대 스텝 수", min_value=1, max_value=16, value=int(st.session_state.auto_max_steps))
-    st.session_state.auto_debug_view = st.checkbox("디버그 보기(계획/변수/출력/오류)", value=bool(st.session_state.auto_debug_view))
+    st.subheader("🤖 오케스트레이션 (ReAct)")
     TOOL_OPTIONS = [
         # Memory
         "memory_search", "memory_read", "memory_upsert",
@@ -361,27 +350,7 @@ with st.sidebar:
         default=[],
         help="플래너/루프가 사용할 수 있는 도구만 허용합니다. 안전/비용 제어용",
     )
-    if st.session_state.auto_mode == "ReAct":
-        st.session_state.react_max_iters = st.slider("ReAct 최대 반복", min_value=1, max_value=12, value=int(st.session_state.react_max_iters))
-    with st.expander("🧭 마지막 계획(요약)", expanded=False):
-        last_state = st.session_state.get("last_auto_plan_state")
-        if last_state:
-            plan = last_state.get("plan")
-            if plan:
-                st.json(plan)
-            vars_map = last_state.get("vars") or {}
-            if vars_map:
-                st.caption("vars")
-                st.json(vars_map)
-            outs = last_state.get("outputs") or {}
-            if outs:
-                st.caption("outputs")
-                st.json(outs)
-            errs = last_state.get("errors") or []
-            if errs:
-                st.caption("errors")
-                for e in errs:
-                    st.write(f"- {e}")
+    st.session_state.react_max_iters = st.slider("ReAct 최대 반복", min_value=1, max_value=12, value=int(st.session_state.react_max_iters))
 
     # 환경/백엔드 배지
     import importlib.util as _import_util
@@ -550,8 +519,8 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
             except Exception:
                 pinned_block = None
 
-            # 항상 자동 오케스트레이션: Planner 또는 ReAct 모드
-            async def _run_auto():
+            # 항상 ReAct 스트리밍 오케스트레이션
+                # 스트리밍 방식으로 ReAct 실행
                 allowed_tools = st.session_state.auto_allowed_tools or None
                 extra_vars = {
                     "owner_id": st.session_state.owner_id or "",
@@ -559,67 +528,29 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
                 }
                 if pinned_block:
                     extra_vars["pinned_core_facts"] = pinned_block
-                if st.session_state.auto_mode == "ReAct":
-                    state = await run_react_rag(
-                        client,
-                        model,
-                        user_message,
-                        allowed_tools=allowed_tools,
-                        extra_vars=extra_vars,
-                        max_iters=int(st.session_state.react_max_iters),
-                    )
-                else:
-                    limits = {"max_steps": int(st.session_state.auto_max_steps)}
-                    state = await run_auto_plan(
-                        client,
-                        model,
-                        user_message,
-                        allowed_tools=allowed_tools,
-                        extra_vars=extra_vars,
-                        limits=limits,
-                    )
-                return state
 
-            try:
-                state = asyncio.run(_run_auto())
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                try:
-                    state = loop.run_until_complete(_run_auto())
-                finally:
-                    loop.close()
+                rec = {"tokens": [], "used_tools": set(), "tool_details": [], "final_text": None}
+                text_stream = stream_react_rag_generator(
+                    user_request=user_message,
+                    rec=rec,
+                    model=model,
+                    client=client,
+                    allowed_tools=allowed_tools,
+                    max_iters=int(st.session_state.react_max_iters),
+                    extra_vars=extra_vars,
+                )
+                final_text = st.write_stream(text_stream)
 
-            # 도구 사용 기록 수집
-            tool_records = state.get("tools_used") or []
-            if tool_records:
-                now_stamp = datetime.now().strftime("%H:%M:%S")
-                for rec in tool_records:
-                    name = rec.get("name") or "(unknown)"
-                    args = rec.get("args") or {}
-                    st.session_state.tool_history.append({"time": now_stamp, "name": name, "args": args})
-                st.info("🛠️ 사용된 도구: " + ", ".join([str(r.get("name")) for r in tool_records if r.get("name")]))
+                now = datetime.now().strftime("%H:%M:%S")
+                for d in rec.get("tool_details", []):
+                    st.session_state.tool_history.append({"time": now, **d})
+                used_tools = list(rec.get("used_tools") or [])
+                if used_tools:
+                    st.info(f"🛠️ 사용된 도구: {', '.join(str(x) for x in used_tools)}")
 
-            # 메시지 출력 및 상태 저장
-            final_msg = state.get("message") or "결과가 없습니다."
-            st.session_state.messages.append(("assistant", final_msg))
-            st.markdown(final_msg)
-            st.session_state.last_auto_plan_state = state
-
-            # 디버그 뷰(옵션)
-            if bool(st.session_state.auto_debug_view):
-                with st.expander("🧪 자동 계획 디버그", expanded=False):
-                    st.caption("plan")
-                    st.json(state.get("plan") or {})
-                    st.caption("vars")
-                    st.json(state.get("vars") or {})
-                    st.caption("outputs")
-                    st.json(state.get("outputs") or {})
-                    errs = state.get("errors") or []
-                    if errs:
-                        st.caption("errors")
-                        for e in errs:
-                            st.write(f"- {e}")
-            st.stop()
+                final_str = final_text if isinstance(final_text, str) else (rec.get("final_text") or "")
+                st.session_state.messages.append(("assistant", final_str))
+                st.stop()
 
             # 3) 파일 업로드 인터페이스는 유지하되, OCR 자동 처리는 제거되었습니다.
 

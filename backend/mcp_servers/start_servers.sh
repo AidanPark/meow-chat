@@ -23,7 +23,11 @@ if [[ -z "$CI" && -z "$DOCKER" ]]; then
 fi
 
 # 스크립트 기준 경로 설정
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 주의: 이 스크립트를 `.` (source)로 실행하면 $0가 /bin/bash 등이 되어
+#       SCRIPT_DIR가 /bin 으로 잘못 계산될 수 있습니다.
+#       Bash에서는 ${BASH_SOURCE[0]}가 소스된 파일 경로를 가리키므로 이를 사용합니다.
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 # .env 자동 로드 (루트/백엔드/현재 디렉토리 우선순위)
 load_env_file() {

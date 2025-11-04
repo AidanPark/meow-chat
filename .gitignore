@@ -38,7 +38,6 @@ venv.bak/
 Pipfile.lock
 
 # Environment variables
-.env
 .venv
 
 # IDE

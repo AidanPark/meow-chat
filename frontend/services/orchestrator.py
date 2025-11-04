@@ -340,103 +340,6 @@ async def run_math_weather(client, task: TaskType, inputs: Dict[str, Any]) -> Or
     return result
 
 
-# ----------------------------------------------------------------------------
-# LLM Planner 기반 오케스트레이션 (일반화된 자동 계획 → 결정적 실행)
-# ----------------------------------------------------------------------------
-
-class PlanStep(TypedDict, total=False):
-    tool: str
-    args: Dict[str, Any]
-    save_as: Optional[str]
-    expect: Optional[Dict[str, Any]]  # {"type": "number"|"string"|"json"}
-
-
-class PlanSpec(TypedDict, total=False):
-    version: int
-    steps: List[PlanStep]
-    limits: Dict[str, Any]  # {"max_steps": int}
-    primary: Optional[str]  # 최종 결과 변수명
-
-
-async def planner_node(state: OrchestratorState, model, client) -> OrchestratorState:
-    """LLM에 현재 가능한 도구 목록을 제공하고, JSON 계획(steps)을 생성하도록 요청한다."""
-    import json as _json
-
-    user_req = (state.get("user_request") or "").strip()
-    allowed = state.get("allowed_tools") or []
-
-    # 간단한 도구 설명 수집(이름만). 필요 시 추가 메타데이터로 확장 가능.
-    try:
-        tools = await client.get_tools()
-        available = []
-        for t in tools:
-            name = getattr(t, "name", None)
-            if not name:
-                continue
-            if allowed and name not in allowed:
-                continue
-            available.append({"name": name})
-    except Exception:
-        available = [{"name": n} for n in (allowed or [])]
-
-    # pinned core facts가 있으면 system 컨텍스트에 함께 제공
-    pinned = None
-    try:
-        pinned = (state.get("vars") or {}).get("pinned_core_facts")
-    except Exception:
-        pinned = None
-
-    sys_prompt = (
-        "당신은 도구 계획자(Planner)입니다. 사용자 요청을 충족하기 위해 허용된 도구로만 \n"
-        "최소한의 단계로 계획을 만들고, 반드시 JSON만 출력하세요. \n"
-        "args에서는 제공된 변수들을 ${변수명} 형태로 참조할 수 있습니다(예: ${owner_id}, ${cat_id}).\n"
-        "형식 예시: {\n  \"version\": 1, \n  \"steps\": [ {\"tool\": \"get_weather\", \"args\": {\"location\": \"${owner_id}\"}, \"save_as\": \"t1\" } ],\n  \"primary\": \"t1\" }\n"
-    )
-    if pinned:
-        sys_prompt += f"\n[핵심 사실(요약)]:\n{str(pinned)[:1200]}\n"
-    # vars 미리보기: 너무 길어지지 않도록 상위 몇 개만 노출
-    vars_map = state.get("vars") or {}
-    try:
-        import json as _json
-        vars_preview = _json.dumps({k: vars_map[k] for k in list(vars_map.keys())[:8]}, ensure_ascii=False)
-    except Exception:
-        vars_preview = str(list(vars_map.keys())[:8])
-
-    user_prompt = (
-        f"요청: {user_req}\n"
-        f"허용 도구: {', '.join([a['name'] for a in available]) if available else '(없음)'}\n"
-        f"사용 가능한 변수: {vars_preview}\n"
-        "반드시 순수 JSON만 출력하세요. 다른 텍스트 금지."
-    )
-
-    try:
-        msg = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}]
-        res = await model.ainvoke(msg)
-        content = getattr(res, "content", None) or str(res)
-        plan = _json.loads(content)
-    except Exception as e:
-        errs = list(state.get("errors") or [])
-        errs.append(f"planner_node: {e}")
-        state["errors"] = errs
-        plan = {"version": 1, "steps": [], "primary": None}
-
-    # 간단 검증/트리밍
-    steps = plan.get("steps") or []
-    if not isinstance(steps, list):
-        steps = []
-    # 허용 도구 필터
-    if allowed:
-        steps = [s for s in steps if isinstance(s, dict) and s.get("tool") in allowed]
-    # 길이 제한
-    max_steps = int((plan.get("limits") or {}).get("max_steps", 8))
-    if len(steps) > max_steps:
-        steps = steps[:max_steps]
-
-    plan["steps"] = steps
-    state["plan"] = plan  # type: ignore[assignment]
-    return state
-
-
 def _resolve_vars(obj: Any, vars_map: Dict[str, Any]) -> Any:
     # 문자열에서 ${var} 치환. dict/list는 재귀.
     if isinstance(obj, str):
@@ -452,114 +355,20 @@ def _resolve_vars(obj: Any, vars_map: Dict[str, Any]) -> Any:
     return obj
 
 
-async def executor_node(state: OrchestratorState, client) -> OrchestratorState:
-    """LLM이 생성한 계획을 결정적으로 실행하는 노드.
+# (Planner 관련 코드는 제거되었습니다)
 
-    - ${var} 형태의 플레이스홀더를 state.vars로 치환
-    - 각 step을 MCPToolInvoker로 호출하고 결과를 vars/outputs에 반영
-    - 실패는 errors에 누적하고 계속 진행(최대 정보 보존)
-    """
-    invoker = MCPToolInvoker(client)
-    vars_map = dict(state.get("vars") or {})
-    plan: PlanSpec = (state.get("plan") or {"steps": []})  # type: ignore[assignment]
-    steps: List[PlanStep] = plan.get("steps", [])  # type: ignore[assignment]
-
-    for step in steps:
-        tool = step.get("tool")
-        args = step.get("args") or {}
-        name = str(tool) if tool else ""
-        rec = {"name": name, "args": args, "ok": False}
-        try:
-            # 변수 치환
-            resolved_args = _resolve_vars(args, vars_map)
-            result = await invoker.call(name, resolved_args)
-            rec["ok"] = True
-
-            # 결과 저장
-            save_as = step.get("save_as")
-            if save_as:
-                vars_map[save_as] = result
-
-            # 기본 outputs 갱신(최근 결과)
-            outs = dict(state.get("outputs") or {})
-            outs[name] = result
-            state["outputs"] = outs
-        except Exception as e:
-            errs = list(state.get("errors") or [])
-            errs.append(f"executor_node ({name}): {e}")
-            state["errors"] = errs
-        finally:
-            used = list(state.get("tools_used") or [])
-            used.append(rec)
-            state["tools_used"] = used
-
-    state["vars"] = vars_map
-    # primary 결과 추출
-    primary = (plan.get("primary") if isinstance(plan, dict) else None) or None
-    if isinstance(primary, str) and primary in vars_map:
-        state["primary_output"] = vars_map[primary]
-    return state
+class PlanStep(TypedDict, total=False):
+    """ReAct 단계에서 사용하는 경량 Step 타입."""
+    tool: str
+    args: Dict[str, Any]
+    save_as: Optional[str]
 
 
-def compose_auto_node(state: OrchestratorState) -> OrchestratorState:
-    # planner/executor 결과를 간단히 요약. 필요시 모델 기반으로 대체.
-    primary = state.get("primary_output")
-    if primary is not None:
-        state["message"] = f"결과: {primary}"
-        return state
-    outs = state.get("outputs") or {}
-    if outs:
-        # 가장 최근 결과를 보여주기
-        last_key = list(outs.keys())[-1]
-        state["message"] = f"{last_key} 결과: {outs[last_key]}"
-    else:
-        if state.get("errors"):
-            state["message"] = "요청을 처리하는 중 일부 단계에서 오류가 발생했습니다."
-        else:
-            state["message"] = "실행할 계획이 없었습니다."
-    return state
-
-
-def build_auto_planner_graph(model, client) -> Any:
-    """LLM Planner → Executor → Compose로 이어지는 자동 계획 그래프를 컴파일합니다."""
-    graph = StateGraph(OrchestratorState)
-
-    async def _planner(state: OrchestratorState) -> OrchestratorState:
-        return await planner_node(state, model, client)
-
-    async def _executor(state: OrchestratorState) -> OrchestratorState:
-        return await executor_node(state, client)
-
-    graph.add_node("planner", _planner)
-    graph.add_node("executor", _executor)
-    graph.add_node("compose_auto", compose_auto_node)
-
-    graph.set_entry_point("planner")
-    graph.add_edge("planner", "executor")
-    graph.add_edge("executor", "compose_auto")
-
-    return graph.compile()
-
-
-async def run_auto_plan(client, model, user_request: str, allowed_tools: Optional[List[str]] = None, limits: Optional[Dict[str, Any]] = None, extra_vars: Optional[Dict[str, Any]] = None) -> OrchestratorState:
-    """자동 계획 모드의 실행 엔트리포인트.
-
-    - user_request: 자연어 사용자 요청
-    - allowed_tools: 사용 허용 도구 화이트리스트(없으면 전체)
-    - limits: 계획 제한값(예: {"max_steps": 8})
-    """
-    app = build_auto_planner_graph(model, client)
-    init: OrchestratorState = {
-        "user_request": user_request,
-        "allowed_tools": allowed_tools or [],
-        "plan": {"version": 1, "steps": [], "limits": limits or {"max_steps": 8}},
-        "vars": dict(extra_vars or {}),
-        "outputs": {},
-        "errors": [],
-        "warnings": [],
-        "tools_used": [],
-    }
-    return await app.ainvoke(init)
+class PlanSpec(TypedDict, total=False):
+    """ReAct에서 내부적으로 사용하는 간단한 Plan 사양."""
+    version: int
+    steps: List[PlanStep]
+    primary: Optional[str]
 
     # ----------------------------------------------------------------------------
     # ReAct RAG: Reason-Act-Observe 루프 (단계적 도구 사용 + 자기평가)
@@ -775,8 +584,17 @@ def react_compose_node(state: OrchestratorState) -> OrchestratorState:
             state["message"] = f"최종 관찰: {obs}"
             return state
 
-    # 추가 fallback
-    return compose_auto_node(state)
+    # 추가 fallback: 마지막 출력 또는 오류/빈 결과 안내
+    outs = state.get("outputs") or {}
+    if outs:
+        last_key = list(outs.keys())[-1]
+        state["message"] = f"{last_key} 결과: {outs.get(last_key)}"
+        return state
+    if state.get("errors"):
+        state["message"] = "요청을 처리하는 중 일부 단계에서 오류가 발생했습니다."
+    else:
+        state["message"] = "결과가 없습니다."
+    return state
 
 
 def build_react_rag_graph(model, client) -> Any:
@@ -834,4 +652,35 @@ async def run_react_rag(client, model, user_request: str, allowed_tools: Optiona
         "react_max_iters": int(max_iters),
         "react_history": [],
     }
-    return await app.ainvoke(init)
+    result: OrchestratorState = await app.ainvoke(init)
+
+    # Friendly fallback for small-talk: if compose ends up with no content, answer directly
+    try:
+        msg = result.get("message")
+        outs = result.get("outputs") or {}
+        errs = result.get("errors") or []
+        no_effective_plan = (not msg or str(msg).strip() == "실행할 계획이 없었습니다.") and (not outs) and (not errs)
+        if no_effective_plan:
+            sys_prompt = (
+                "당신은 친절하고 간결한 한국어 비서입니다. 작은 인사말이나 잡담에도 따뜻하게 응답하세요.\n"
+                "불필요한 도구 사용 계획은 만들지 말고, 지금 입력에 친근하게 답변만 출력하세요."
+            )
+            vars_map = dict(extra_vars or {})
+            try:
+                pinned = vars_map.get("pinned_core_facts")
+                if pinned:
+                    sys_prompt += f"\n[핵심 사실 요약]\n{str(pinned)[:800]}\n"
+            except Exception:
+                pass
+
+            user_prompt = user_request.strip()
+            ai_res = await model.ainvoke([
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt},
+            ])
+            content = getattr(ai_res, "content", None) or str(ai_res)
+            result["message"] = content
+    except Exception:
+        pass
+
+    return result
