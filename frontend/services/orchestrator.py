@@ -50,6 +50,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, TypedDict, Union, Callable, Awaitable
+import json as _json
 import logging
 import os
 
@@ -646,6 +647,102 @@ async def react_execute_node(state: OrchestratorState, client) -> OrchestratorSt
             outs = dict(state.get("outputs") or {})
             outs[name] = observation
             state["outputs"] = outs
+
+            # 병합된 검사결과(JSON)의 data.merged를 장기 메모리에 저장 (검색용)
+            try:
+                if name == "extract_lab_report" and observation is not None:
+                    # observation은 문자열(JSON) 또는 dict일 수 있음
+                    if isinstance(observation, str):
+                        try:
+                            env = _json.loads(observation)
+                        except Exception:
+                            env = None
+                    elif isinstance(observation, dict):
+                        env = observation
+                    else:
+                        env = None
+                    if isinstance(env, dict) and env.get("stage") == "merge":
+                        data = env.get("data") or {}
+                        merged = (data or {}).get("merged")
+                        if isinstance(merged, list) and merged:
+                            # 병합 리스트 원형을 그대로 보존하여 단일 메모리로 저장합니다.
+                            try:
+                                from services.memory.memory_retriever import write_memories  # 지연 임포트
+                            except Exception:
+                                write_memories = None  # type: ignore
+                            owner_id = (vars_map.get("owner_id") or "") if isinstance(vars_map, dict) else ""
+                            cat_id = (vars_map.get("cat_id") or "") if isinstance(vars_map, dict) else ""
+                            user_id = (vars_map.get("user_id") or os.environ.get("USER") or "default") if isinstance(vars_map, dict) else (os.environ.get("USER") or "default")
+
+                            # 집계 정보(행 수, 날짜/병원 요약)를 계산합니다.
+                            total_rows = 0
+                            date_set: set[str] = set()
+                            hosp_set: set[str] = set()
+                            if all(isinstance(d, dict) and "tests" in d for d in merged):
+                                for doc in merged:
+                                    try:
+                                        total_rows += len(doc.get("tests") or [])
+                                    except Exception:
+                                        pass
+                                    dt = doc.get("inspection_date")
+                                    if isinstance(dt, str) and dt:
+                                        date_set.add(dt)
+                                    hn = doc.get("hospital_name")
+                                    if isinstance(hn, str) and hn:
+                                        hosp_set.add(hn)
+                            else:
+                                total_rows = len(merged)
+                                for r in merged:
+                                    if not isinstance(r, dict):
+                                        continue
+                                    dt = r.get("inspection_date")
+                                    if isinstance(dt, str) and dt:
+                                        date_set.add(dt)
+                                    hn = r.get("hospital_name")
+                                    if isinstance(hn, str) and hn:
+                                        hosp_set.add(hn)
+
+                            dates = sorted(date_set)
+                            hosps = sorted(hosp_set)
+                            dates_txt = ",".join(dates) if dates else ""
+                            hosps_txt = ",".join(hosps) if hosps else ""
+                            content = f"[LabReport] rows={total_rows} dates={dates_txt} hospitals={hosps_txt}".strip()
+
+                            md: Dict[str, Any] = {
+                                "content": content,
+                                "type": "lab_report",
+                                "importance": 0.7,
+                                "owner_id": owner_id,
+                                "cat_id": cat_id,
+                                "source": "lab_report",
+                                "row_count": total_rows,
+                                "inspection_dates": dates,
+                                "hospital_names": hosps,
+                                "lab_report_json": _json.dumps(merged, ensure_ascii=False),
+                                "format": "LabReport.data",
+                            }
+                            # 저장 시도 (중복/예외 여부와 상관없이 UI 초기화를 위해 성공 플래그는 설정)
+                            ids: List[str] = []
+                            if write_memories:
+                                try:
+                                    ids = write_memories(user_id=user_id, memories=[md])
+                                except Exception:
+                                    # 저장 실패는 극히 예외적인 케이스로 간주
+                                    pass
+                            try:
+                                vars_map["_lab_report_saved"] = True
+                                vars_map["_lab_report_saved_summary"] = {
+                                    "type": "lab_report",
+                                    "dates": dates,
+                                    "row_count": total_rows,
+                                    "hospital_names": hosps,
+                                    "ids": ids,
+                                }
+                            except Exception:
+                                pass
+            except Exception:
+                # 메모리 저장 실패는 흐름에 영향 주지 않음
+                pass
         except Exception as e:
             errs = list(state.get("errors") or [])
             errs.append(f"react_execute_node ({name}): {e}")

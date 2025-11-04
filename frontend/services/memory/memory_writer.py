@@ -22,14 +22,29 @@ def _infer_type(text: str) -> str:
         return "allergy"
     if any(k in t for k in ["만성", "진단", "질환", "병력", "diagnosis", "chronic"]):
         return "chronic"
-    if any(k in t for k in ["금기", "주의", "contraindication"]):
+    if any(k in t for k in ["금기", "주의", "contraindication", "금지", "피해야"]):
         return "contraindication"
     if any(k in t for k in ["복용", "약", "투약", "용량", "med", "dosage"]):
         return "medication"
     if any(k in t for k in ["식단", "사료", "영양제", "diet", "food"]):
         return "diet"
-    if any(k in t for k in ["프로필", "품종", "성별", "중성화", "생일", "연령", "profile"]):
+    # 기본 프로필: 이름/나이/성별/중성화/성격/몸무게 등 포함
+    if any(k in t for k in [
+        "프로필", "품종", "성별", "중성화", "생일", "연령", "profile",
+        "이름", "name", "성격", "temperament", "몸무게", "체중", "weight", "kg",
+    ]):
         return "profile"
+    # 선호/의사결정/제약/할일/타임라인 등 추가 유형
+    if any(k in t for k in ["선호", "좋아", "싫어", "preference"]):
+        return "preference"
+    if any(k in t for k in ["결정", "정하기", "의사결정", "decision"]):
+        return "decision"
+    if any(k in t for k in ["제약", "제한", "constraint", "cannot", "하지 말"]):
+        return "constraint"
+    if any(k in t for k in ["할일", "todo", "해야", "할 예정", "일정"]):
+        return "todo"
+    if any(k in t for k in ["타임라인", "timeline", "기록", "지난", "과거"]):
+        return "timeline"
     return "fact"
 
 
@@ -41,10 +56,14 @@ def _importance_for_type(t: str) -> float:
         "medication": 0.85,
         "chronic": 0.8,
         "diet": 0.7,
-        "profile": 0.65,
+        # 기본 프로필은 프롬프트 기본 포함을 위해 가중치 상향
+        "profile": 0.85,
         "fact": 0.5,
         "preference": 0.45,
-        "todo": 0.4,
+        "decision": 0.5,
+        "constraint": 0.7,
+        "todo": 0.45,
+        "timeline": 0.5,
         "note": 0.4,
     }
     return weights.get(t, 0.5)

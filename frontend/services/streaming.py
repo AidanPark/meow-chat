@@ -205,6 +205,8 @@ def stream_react_rag_generator(
             })
 
             # 루프 실행: 계획 → 실행 → 자가평가
+            show_progress = bool((extra_vars or {}).get("_show_react_progress", False))
+            rec.setdefault("progress_logs", [])
             for _ in range(int(max_iters)):
                 state = await react_plan_node(state, model, client)
                 finish_hint = state.get("react_finish")
@@ -214,7 +216,13 @@ def stream_react_rag_generator(
                     step = steps[0]
                     tool = step.get("tool")
                     args = step.get("args") or {}
-                    _qput(f"계획: {tool} 실행 준비\n")
+                    # 기록은 항상 남기되, 화면 출력은 show_progress로 제어
+                    try:
+                        rec["progress_logs"].append(f"계획: {tool} 실행 준비")
+                    except Exception:
+                        pass
+                    if show_progress:
+                        _qput(f"계획: {tool} 실행 준비\n")
                 if finish_hint:
                     break
 
@@ -236,22 +244,39 @@ def stream_react_rag_generator(
                         details.append({"name": tool, "args": args})
                     except Exception:
                         pass
-                    if tool:
-                        _qput(f"🛠️ {tool} 호출\n")
-                    if obs is not None:
-                        # 너무 길면 요약해서 출력
-                        try:
+                    # 기록은 항상 남기되, 화면 출력은 show_progress로 제어
+                    try:
+                        if tool:
+                            rec["progress_logs"].append(f"🛠️ {tool} 호출")
+                        if obs is not None:
                             txt = str(obs)
-                            if len(txt) > 600:
-                                txt = txt[:600] + "…"
-                            _qput(f"관찰: {txt}\n")
-                        except Exception:
-                            pass
+                            if len(txt) > 240:
+                                txt = txt[:240] + "…"
+                            rec["progress_logs"].append(f"관찰: {txt}")
+                    except Exception:
+                        pass
+                    if show_progress:
+                        if tool:
+                            _qput(f"🛠️ {tool} 호출\n")
+                        if obs is not None:
+                            # 너무 길면 요약해서 출력
+                            try:
+                                txt = str(obs)
+                                if len(txt) > 600:
+                                    txt = txt[:600] + "…"
+                                _qput(f"관찰: {txt}\n")
+                            except Exception:
+                                pass
 
                 state = await react_self_eval_node(state, model)
                 cont = bool(state.get("react_should_continue"))
                 if cont:
-                    _qput("계속 진행합니다…\n")
+                    try:
+                        rec["progress_logs"].append("계속 진행합니다…")
+                    except Exception:
+                        pass
+                    if show_progress:
+                        _qput("계속 진행합니다…\n")
                     continue
                 break
 
@@ -260,6 +285,19 @@ def stream_react_rag_generator(
             final_msg = state.get("message") or ""
             outs = state.get("outputs") or {}
             errs = state.get("errors") or []
+            # 랩리포트 저장 성공 여부 및 요약을 rec로 전달
+            try:
+                vars_map = state.get("vars") or {}
+                saved = bool(vars_map.get("_lab_report_saved"))
+                if saved:
+                    rec["lab_report_saved"] = True
+                    summ = vars_map.get("_lab_report_saved_summary")
+                    if summ:
+                        # 통일된 인터페이스: rec["saved_memories"] = [ {type, dates, row_count, ...} ]
+                        arr = rec.setdefault("saved_memories", [])
+                        arr.append(summ)
+            except Exception:
+                pass
 
             # 스몰토크/무플랜 폴백: 모델 스트리밍으로 직접 응답 생성
             no_effective_plan = (not final_msg or str(final_msg).strip() in ("", "실행할 계획이 없었습니다.")) and (not outs) and (not errs)

@@ -6,9 +6,11 @@ from __future__ import annotations
 """
 
 from typing import List, Dict, Any, Optional
+import os
 from datetime import datetime
 
 from .memory_store import get_memory_store
+from difflib import SequenceMatcher
 
 
 def rewrite_query(user_message: str, summary_text: str | None) -> str:
@@ -41,10 +43,19 @@ def write_memories(user_id: str, memories: List[Dict[str, Any]]) -> List[str]:
         content = (m.get("content") or "").strip()
         if not content:
             continue
-        # 간단 중복 체크: 동일 텍스트가 이미 존재하는지 확인(similarity 검색 후 내용 일치 검사)
+        # 근사 중복 체크: 유사 검색 Top-K 후 높은 유사도(텍스트)면 스킵
         try:
-            exist = store.retrieve(user_id=user_id, query=content, k=1)
-            if exist and (exist[0].get("content") or "").strip() == content:
+            exist = store.retrieve(user_id=user_id, query=content, k=3)
+            dup = False
+            for ex in (exist or []):
+                ex_text = (ex.get("content") or "").strip()
+                if not ex_text:
+                    continue
+                # 정확 일치 또는 0.92 이상 유사도는 중복으로 간주
+                if ex_text == content or SequenceMatcher(None, ex_text, content).ratio() >= 0.92:
+                    dup = True
+                    break
+            if dup:
                 continue
         except Exception:
             pass
@@ -55,6 +66,11 @@ def write_memories(user_id: str, memories: List[Dict[str, Any]]) -> List[str]:
         md.setdefault("importance", 0.5)
         md.setdefault("timestamp", now)
         md.setdefault("user_id", user_id)
+        # 식별자 메타 자동 포함 (있으면 유지)
+        if "owner_id" not in md:
+            md["owner_id"] = os.environ.get("MEOW_OWNER_ID", "")
+        if "cat_id" not in md:
+            md["cat_id"] = os.environ.get("MEOW_CAT_ID", "")
         try:
             ids = store.upsert_memories(user_id=user_id, memories=[md])
             saved_ids.extend(ids)

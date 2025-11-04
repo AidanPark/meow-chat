@@ -211,11 +211,7 @@ async def extract_lab_report(paths: Sequence[str], do_preprocess: bool = True, d
 
     try:
         merged_env: MergeEnvelope = lab_report_extractor.merge_extractions(extractions)
-        # 최종 병합 JSON을 서버 콘솔에 출력
-        try:
-            logger.info("\n===== Final Merged JSON =====\n%s\n", merged_env.model_dump_json(indent=2, ensure_ascii=False))
-        except Exception:
-            pass
+        # 중복 로그 방지: 최종 병합 JSON은 반환만 하고 별도 배너 로그는 남기지 않습니다.
         return merged_env.model_dump_json(indent=2, ensure_ascii=False)
     except Exception as exc:  # pragma: no cover
         logger.error("merge_extractions 실패: %s", exc)
