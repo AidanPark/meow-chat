@@ -14,7 +14,7 @@
 요구사항:
 - 프로젝트 Python 의존성(예: backend/requirements.txt)
 - 환경변수에 OPENAI_API_KEY 존재 또는 레포 루트의 .env 파일
-- 선택사항: MCP 서버를 기본 포트(8000/8001/8002/8003 등)로 실행하거나 `frontend/config/mcp_servers.yml`에서 엔드포인트 설정
+- 선택사항: MCP 서버를 기본 포트(8000/8001/8002/8004/8005 등)로 실행하거나 `frontend/config/mcp_servers.yml`에서 엔드포인트 설정
 
 참고:
 - 장기 기억은 `frontend/data/vectors/` 등에 저장되며, 재실행 시에도 유지할 수 있습니다.
@@ -32,7 +32,6 @@
 - math_utility: http://localhost:8000/sse
 - weather_api:   http://localhost:8001/sse
 - cat_health:    http://localhost:8002/sse
-- ocr_core:      http://localhost:8003/sse
 - extract_lab_report: http://localhost:8004/sse
 - memory:        http://localhost:8005/sse
 

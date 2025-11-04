@@ -291,8 +291,8 @@ meow-chat/
 from app.services.analysis import LabReportExtractor
 from app.models.envelopes import OCRResultEnvelope
 
-# 1) 이미지 → OCR 결과는 `backend/mcp_servers/ocr_core` 서버가 수행합니다.
-#    여기서는 이미 얻어온 OCRResultEnvelope를 가정합니다.
+# 1) 이미지 → OCR 결과는 검사 리포트 서버(`backend/mcp_servers/lab_report`)가 내부적으로 수행할 수 있습니다.
+#    또는 이미 확보한 OCRResultEnvelope가 있다면 그대로 전달할 수도 있습니다.
 ocr_env: OCRResultEnvelope = ...
 
 extractor = LabReportExtractor()

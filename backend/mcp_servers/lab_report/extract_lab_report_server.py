@@ -39,8 +39,8 @@ if not any(getattr(h, "baseFilename", None) == LOG_PATH for h in logger.handlers
     logger.addHandler(file_handler)
     logger.setLevel(logging.INFO)
 
-from app.core.deps import get_lab_report_extractor  # noqa: E402
-from app.models.envelopes import OCRResultEnvelope, MergeEnvelope
+from app.core.deps import get_lab_report_extractor, get_image_preprocessor, get_ocr_service  # noqa: E402
+from app.models.envelopes import OCRResultEnvelope, OCRData, OCRMeta, MergeEnvelope
 
 
 mcp = FastMCP("LabReportServer")
@@ -50,77 +50,126 @@ mcp.settings.host = _host
 mcp.settings.port = _port
 
 
-@mcp.tool()
-async def extract_lab_report(ocr_results: Sequence[Any]) -> str:
-    """혈액검사 결과지의 OCR 출력들을 구조화하여 MergeEnvelope(JSON)로 반환합니다.
+_IMAGE_PREPROCESSOR = None
+_OCR_SVC = None
 
-    목적:
-    - OCR로 얻은 검사 결과 텍스트를 해석/정규화하여 주요 임상 지표를 추출하고 병합합니다.
+
+def _get_preprocessor():
+    global _IMAGE_PREPROCESSOR
+    if _IMAGE_PREPROCESSOR is None:
+        _IMAGE_PREPROCESSOR = get_image_preprocessor()
+    return _IMAGE_PREPROCESSOR
+
+
+def _get_ocr_service():
+    global _OCR_SVC
+    if _OCR_SVC is None:
+        _OCR_SVC = get_ocr_service()
+    return _OCR_SVC
+
+
+def _run_ocr_pipeline(image_bytes: bytes, do_preprocess: bool, debug: bool) -> OCRResultEnvelope:
+    data = image_bytes
+    if do_preprocess:
+        try:
+            data = _get_preprocessor().process_bytes(data, debug=bool(debug))
+        except Exception as exc:
+            logger.exception("이미지 전처리 실패: do_preprocess=%s, debug=%s", do_preprocess, debug)
+            raise RuntimeError(f"image preprocessing failed: {exc}") from exc
+
+    ocr_service = _get_ocr_service()
+    try:
+        ocr_result_raw = ocr_service.run_ocr_from_bytes(data)
+    except Exception as exc:
+        logger.exception("PaddleOCR 실행 실패")
+        raise RuntimeError(f"paddleocr execution failed: {exc}") from exc
+
+    if ocr_result_raw is None:
+        logger.error("PaddleOCR가 None을 반환했습니다.")
+        raise RuntimeError("paddleocr returned no result")
+
+    if hasattr(ocr_result_raw, "data") and hasattr(ocr_result_raw, "meta"):
+        return ocr_result_raw  # type: ignore[return-value]
+
+    logger.warning("예상치 못한 OCR 반환 형태: %r", type(ocr_result_raw))
+    return OCRResultEnvelope(stage="ocr", data=OCRData(items=[]), meta=OCRMeta(items=0))
+
+
+@mcp.tool()
+async def extract_lab_report(paths: Sequence[str], do_preprocess: bool = True, debug: bool = False) -> str:
+    """이미지 경로를 입력받아 내부에서 OCR→추출→병합까지 수행하고 MergeEnvelope(JSON)로 반환합니다.
 
     입력:
-    - ocr_results: OCRResultEnvelope(JSON 문자열)들의 시퀀스. 여러 페이지/이미지를 한 번에 전달할 수 있습니다.
-      (서버 구현상 dict 형태도 허용되며, {"ocr_result": <JSON>, "path": <str>} 같이 전달된 경우 내부에서 처리합니다.)
+    - paths: 이미지 경로들의 시퀀스(str). 한 장 이상 허용합니다.
+    - do_preprocess: 전처리 사용 여부(기본값 True)
+    - debug: 디버그 모드(기본값 False)
 
     출력:
     - MergeEnvelope(JSON 문자열). RBC/HCT/HGB/WBC 등 핵심 수치 및 메타를 포함합니다.
-
-    적합한 상황:
-    - 검사 결과지 텍스트가 이미 확보되어 있고, 구조화/요약/이상치 파악이 필요한 경우
-
-    사전조건/관계:
-    - 이미지로부터 텍스트가 필요하면 먼저 OCR 도구(ocr_image_file)를 사용해 OCRResultEnvelope(JSON)를 확보하세요.
-    - 그 다음 이 도구에 해당 JSON 문자열 리스트를 입력으로 전달하면 됩니다.
     """
-    if not isinstance(ocr_results, Sequence) or not ocr_results:
-        return json.dumps({"error": "ocr_results must be a non-empty list"}, ensure_ascii=False)
+    if isinstance(paths, str):  # type: ignore[arg-type]
+        paths = [paths]
+    if not isinstance(paths, Sequence) or not paths:
+        return json.dumps({"error": "paths must be a non-empty list"}, ensure_ascii=False)
 
     lab_report_extractor = get_lab_report_extractor(progress_cb=None)
     extractions: List[dict] = []
     failures: List[dict] = []
 
-    for idx, raw in enumerate(ocr_results):
-        logger.info("수신된 OCR 결과: index=%s, type=%s", idx, type(raw))
-        payload = raw
-        source_path = None
-        if isinstance(raw, dict):
-            source_path = raw.get("path")
-            if "ocr_result" in raw:
-                payload = raw["ocr_result"]
-            elif "error" in raw:
-                failures.append({"index": idx, "path": source_path, "error": raw.get("error")})
-                logger.error("OCR 결과에 오류가 포함되어 있습니다(index=%s, path=%s): %s", idx, source_path, raw.get("error"))
-                continue
-            else:
-                failures.append({"index": idx, "path": source_path, "error": "missing ocr_result field"})
-                logger.error("OCR 결과에 ocr_result 필드가 없습니다(index=%s, path=%s)", idx, source_path)
-                continue
+    loop = None
+    try:
+        import asyncio as _asyncio
+        loop = _asyncio.get_running_loop()
+    except Exception:
+        loop = None
+
+    for idx, path in enumerate(paths):
+        logger.info("🖼️ EXTRACT_LAB_REPORT 호출: path=%s, do_preprocess=%s, debug=%s", path, do_preprocess, debug)
+        if not path or not os.path.exists(path):
+            msg = f"File not found: {path}"
+            logger.error(msg)
+            failures.append({"index": idx, "path": path, "error": msg})
+            continue
 
         try:
-            if isinstance(payload, str):
-                ocr_env = OCRResultEnvelope.model_validate_json(payload)
-            elif isinstance(payload, dict):
-                ocr_env = OCRResultEnvelope.model_validate(payload)
-            else:
-                raise ValueError(f"Invalid OCR result type: {type(payload)}")
-        except Exception as exc:
-            logger.error("OCR 결과 파싱 실패 (index=%s, path=%s): %s", idx, source_path, exc)
-            return json.dumps(
-                {
-                    "error": f"invalid ocr result at index {idx}: {exc}",
-                    "path": source_path,
-                    "failures": failures,
-                },
-                ensure_ascii=False,
-            )
+            with open(path, "rb") as f:
+                b = f.read()
+        except Exception as e:
+            msg = f"Failed to read file: {e}"
+            logger.error(msg)
+            failures.append({"index": idx, "path": path, "error": msg})
+            continue
 
-        extraction_env = lab_report_extractor.ocr_to_extraction(ocr_env)
-        extractions.append(extraction_env.data)
+        try:
+            if loop:
+                ocr_env = await loop.run_in_executor(
+                    None,
+                    lambda b=b: _run_ocr_pipeline(
+                        b,
+                        do_preprocess=do_preprocess,
+                        debug=debug,
+                    ),
+                )
+            else:
+                ocr_env = _run_ocr_pipeline(b, do_preprocess=do_preprocess, debug=debug)
+        except Exception as exc:
+            logger.exception("OCR 파이프라인 실패: path=%s", path)
+            failures.append({"index": idx, "path": path, "error": str(exc)})
+            continue
+
+        try:
+            extraction_env = lab_report_extractor.ocr_to_extraction(ocr_env)
+            extractions.append(extraction_env.data)
+        except Exception as exc:
+            logger.exception("extraction 실패: path=%s", path)
+            failures.append({"index": idx, "path": path, "error": f"extraction_failed: {exc}"})
+            continue
 
     if not extractions:
         return json.dumps(
             {
-                "error": "no_valid_ocr_results",
-                "message": "유효한 OCR 결과가 없어 분석을 진행할 수 없습니다.",
+                "error": "no_valid_images",
+                "message": "유효한 이미지에서 OCR/추출을 수행하지 못했습니다.",
                 "failures": failures,
             },
             ensure_ascii=False,
@@ -129,9 +178,9 @@ async def extract_lab_report(ocr_results: Sequence[Any]) -> str:
     try:
         merged_env: MergeEnvelope = lab_report_extractor.merge_extractions(extractions)
         return merged_env.model_dump_json(indent=2, ensure_ascii=False)
-    except Exception as exc:  # pragma: no cover - 추출/병합 실패 시 메시지 반환
+    except Exception as exc:  # pragma: no cover
         logger.error("merge_extractions 실패: %s", exc)
-        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+        return json.dumps({"error": str(exc), "failures": failures}, ensure_ascii=False)
 
 
 if __name__ == "__main__":

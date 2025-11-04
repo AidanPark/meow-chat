@@ -323,11 +323,18 @@ def stream_react_rag_generator(
                         rec.setdefault("tokens", []).append(token)
                         _qput(token)
                 rec["final_text"] = "".join(tokens) if tokens else str(final_msg)
-            except Exception:
+            except Exception as e:
                 # 스트리밍 실패 시 최종 메시지를 한 번에 출력
                 txt = str(final_msg)
                 rec["final_text"] = txt
                 _qput(txt)
+                try:
+                    _LOGGER.error(
+                        "[STREAMING ERROR] compose streaming failure: %s",
+                        str(e),
+                    )
+                except Exception:
+                    pass
         except Exception as e:
             rec["error"] = str(e)
             # Structured logging: capture full stack including ExceptionGroup sub-exceptions

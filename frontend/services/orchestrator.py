@@ -2,26 +2,26 @@
 Meow Chat 오케스트레이터 (LangGraph 기반)
 =======================================================================
 
-이 모듈은 MultiServerMCPClient로 노출된 여러 MCP 서버 도구(Math/Weather …)를
-"상태(State)를 가진 그래프"로 오케스트레이션하기 위한 구현입니다. 크게 두 가지 모드가 포함됩니다.
+이 모듈은 MultiServerMCPClient로 노출된 여러 MCP 서버/로컬 도구를
+"상태(State)를 가진 그래프"로 오케스트레이션합니다. 현재 두 가지 흐름을 제공합니다.
 
 1) 규칙 기반 스켈레톤(Math/Weather)
     - router → (math | weather) → compose 의 단순 파이프라인
-    - 목적: "작업 라우팅 → 도구 호출 → 결과 합성"의 최소 패턴을 익히기 위한 예시
-    - task="math" 일 때: add/multiply/… 같은 MathUtilityServer 도구를 호출
-    - task="weather" 일 때: get_weather/get_forecast/… 같은 WeatherAPIServer 도구를 호출
+    - 목적: "작업 라우팅 → 도구 호출 → 결과 합성"의 최소 패턴 예시
+    - task="math" 일 때: add/multiply/… 같은 MathUtilityServer 도구 호출
+    - task="weather" 일 때: get_weather/get_forecast/… 같은 WeatherAPIServer 도구 호출
 
-2) LLM 플래너 기반 자동 계획(Always-On Planner)
-    - planner(LLM) → executor(결정적 실행) → compose 의 구조
-    - 모델이 JSON 계획(PlanSpec)을 생성하고, 실행기는 그 계획을 "결정적으로" 수행합니다.
-    - 장점: 시나리오마다 코드를 새로 짜지 않고, 허용된 도구 범위 내에서 다양한 요구를 일반화
-    - 안전장치: 허용 도구 화이트리스트, 단계 수 제한, 오류 누적 및 관찰(툴 사용 기록)
+2) ReAct RAG 루프(Reason-Act-Observe)
+    - plan(한 단계 Action 설계) → execute(도구 호출) → self-eval(계속/종료 판단) → compose
+    - 각 반복에서 단일 스텝(action={tool,args,save_as})만 계획하고 실행하여, 관찰 결과를 바탕으로 다음 스텝을 결정합니다.
+    - 안전장치: 허용 도구 화이트리스트, 반복 횟수 제한, 오류 누적/관찰(툴 사용 기록)
 
 핵심 개념
 -----------
-- OrchestratorState: 그래프를 흐르는 단일 상태(입력/출력/오류/도구사용/플랜/변수 등)
-- MCPToolInvoker: MCP 도구를 이름으로 안전하게 찾아 비동기로 호출하는 래퍼
-- 노드(Node): 순수 함수(또는 async 함수)로 상태를 입력받아 갱신 후 반환
+- OrchestratorState: 그래프를 흐르는 단일 상태(입력/출력/오류/도구사용/계획/변수 등)
+- MCPToolInvoker: MCP 도구를 이름으로 찾아 비동기로 호출하는 래퍼
+- 로컬 함수 도구: 프로세스 내 함수형 도구(예: OCR 어댑터)를 MCP와 동일한 인터페이스로 실행
+- 노드(Node): 상태를 입력받아 갱신 후 반환하는 (비)동기 함수
 - 엣지(Edge): 다음 노드로의 연결. 조건부 엣지로 분기 가능
 
 상태(State) 설계 요약
@@ -30,32 +30,18 @@ Meow Chat 오케스트레이터 (LangGraph 기반)
 - inputs/outputs: 각 노드가 읽고/쓰는 I/O 컨테이너
 - errors/warnings: 단계별 예외/경고 누적(Compose에서 사용자 메시지로 환원 가능)
 - tools_used: {name, args, ok} 리스트로 관찰성 확보(UI tool_history에 반영)
-- user_request/plan/vars/primary_output: LLM 플래너 모드에서 사용
-
-LLM 플래너 모드 작동 방식
----------------------------
-1) planner_node: 현재 허용된 MCP 도구 목록과 사용자 요청을 바탕으로 JSON 계획(steps)을 생성
-    - 형식: PlanSpec {version, steps: [PlanStep], primary, limits}
-    - 각 Step: {tool, args, save_as, expect?}
-    - 안전장치: 허용 도구(화이트리스트) 필터, 단계 수 상한(max_steps)
-2) executor_node: 계획을 "결정적으로" 수행
-    - ${var} 템플릿을 vars 맵으로 치환
-    - MCPToolInvoker로 도구를 호출(비동기)
-    - 결과를 vars[save_as], outputs[tool]에 저장, tools_used에 기록
-    - 실패는 errors에 누적하고 계속 진행(가능한 정보로 최대한 응답)
-3) compose_auto_node: primary_output 또는 마지막 결과를 간단히 합성(필요 시 모델 요약으로 대체 가능)
+- user_request/plan/vars: ReAct 루프에서 사용되는 요청/단계 계획/변수 컨테이너
 
 운영/확장 포인트
 ------------------
-- 재시도/타임아웃/회로 차단: MCPToolInvoker에 추가해 안정성 강화
+- 재시도/타임아웃/회로 차단: MCPToolInvoker 또는 로컬 도구 레이어에서 확장
 - 병렬 실행/Map 노드: 여러 입력(batch)에 대한 동시 처리(동시성 제한 필수)
-- 계획 검증 고도화: expect/type/range 검증, 금지 도구/인자 필터, 비용 상한
-- 관찰성: step별 ms, 호출 횟수, 성공률, 오류 사유 등을 로깅/메트릭으로 적재
+- 계획/입력 검증 강화: 타입/범위 검증, 금지 도구/인자 필터, 비용 상한
+- 관찰성: 단계별 ms, 호출 횟수, 성공률, 오류 사유 등을 로깅/메트릭으로 적재
 
 주의 사항
 ----------
-- Weather 도구처럼 문자열을 반환하는 경우, 후속 수치 연산이 필요하면 플래너 프롬프트로 파싱을 유도하거나
-  MCP 서버에서 구조화(JSON) 형태로 반환하도록 개선하는 것이 견고합니다.
+- 어떤 도구가 문자열을 반환한다면, 후속 단계에서 파싱/정규화 또는 MCP 서버/로컬 도구에서 구조화(JSON) 반환을 권장합니다.
 - 본 파일은 "오케스트레이션" 레이어이며, UI 연결/토글은 frontend/app.py 에서 처리합니다.
 """
 
@@ -63,7 +49,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Union, Callable, Awaitable
+import logging
+import os
 
 try:
     # LangGraph 1.0+ API
@@ -99,7 +87,7 @@ class OrchestratorState(TypedDict, total=False):
     tools_used: List[Dict[str, Any]]  # {name, args, ok(bool), ms?}
     message: Optional[str]  # 최종 사용자용 메시지
 
-    # LLM 플래너용 필드
+    # 공통/계획 관련 필드(ReAct에서 사용)
     user_request: Optional[str]
     allowed_tools: Optional[List[str]]
     plan: Optional[Dict[str, Any]]
@@ -112,6 +100,73 @@ class OrchestratorState(TypedDict, total=False):
     react_history: List[Dict[str, Any]]  # [{step, observation, ok} ...]
     react_finish: Optional[Dict[str, Any]]  # {"use": "var"|"message", "value": str}
     react_should_continue: Optional[bool]
+
+
+# -----------------------------
+# Logging (orchestrator strategy & tool calls)
+# -----------------------------
+_ORCH_LOGGER = logging.getLogger("meow.frontend.orchestrator")
+if not _ORCH_LOGGER.handlers:
+    _ORCH_LOGGER.setLevel(logging.INFO)
+    _ch = logging.StreamHandler()
+    _ch.setLevel(logging.INFO)
+    _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    _ch.setFormatter(_fmt)
+    _ORCH_LOGGER.addHandler(_ch)
+
+    # 프론트엔드 로그 디렉터리(frontend/logs/)에 orchestrator.log를 기록합니다.
+    try:
+        _BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # frontend/
+        _LOG_DIR = os.path.join(_BASE_DIR, "logs")
+        os.makedirs(_LOG_DIR, exist_ok=True)
+        _fh = logging.FileHandler(os.path.join(_LOG_DIR, "orchestrator.log"))
+        _fh.setLevel(logging.INFO)
+        _fh.setFormatter(_fmt)
+        _ORCH_LOGGER.addHandler(_fh)
+    except Exception:
+        # 파일 핸들러 실패 시 콘솔 로깅만 사용합니다.
+        pass
+
+
+def _preview_data(data: Any, max_len: int = 1200) -> str:
+    """로그에 출력하기 위한 안전한 요약 문자열(최대 길이 제한)을 생성합니다."""
+    try:
+        import json as _json
+        if isinstance(data, (dict, list, tuple)):
+            try:
+                txt = _json.dumps(data, ensure_ascii=False)  # may raise
+            except Exception:
+                txt = str(data)
+        else:
+            txt = str(data)
+        if len(txt) > max_len:
+            return txt[:max_len] + "…"
+        return txt
+    except Exception:
+        try:
+            return repr(data)[:max_len]
+        except Exception:
+            return "<unprintable>"
+
+
+# -----------------------------
+# 로컬 함수 도구 (하이브리드 접근)
+# -----------------------------
+class SimpleLocalTool:
+    """ainvoke(args)->Any 형태의 경량 로컬 함수형 도구."""
+
+    def __init__(self, name: str, description: str, ainvoke: Callable[[Dict[str, Any]], Awaitable[Any]]):
+        self.name = name
+        self.description = description
+        self._ainvoke = ainvoke
+
+    async def ainvoke(self, args: Dict[str, Any]) -> Any:
+        return await self._ainvoke(args)
+
+
+def _build_local_tools(client) -> List[SimpleLocalTool]:
+    """현 시점엔 로컬 도구를 제공하지 않습니다(모든 흐름은 MCP 도구로 처리)."""
+    return []
 
 
 # -----------------------------
@@ -400,6 +455,7 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
     try:
         tools = await client.get_tools()
         available = []
+        # MCP tools
         for t in tools:
             name = getattr(t, "name", None)
             if not name:
@@ -407,10 +463,17 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
             if allowed and name not in allowed:
                 continue
             desc = getattr(t, "description", None)
-            # 설명은 너무 길 경우 앞부분만 사용
             if isinstance(desc, str) and len(desc) > 260:
                 desc = desc[:260] + "…"
             available.append({"name": name, "desc": desc or ""})
+        # Local tools
+        for lt in _build_local_tools(client):
+            if allowed and lt.name not in allowed:
+                continue
+            d = lt.description
+            if isinstance(d, str) and len(d) > 260:
+                d = d[:260] + "…"
+            available.append({"name": lt.name, "desc": d or ""})
     except Exception:
         available = [{"name": n, "desc": ""} for n in (allowed or [])]
 
@@ -428,12 +491,13 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
         "{\n  \"action\": {\"tool\": string, \"args\": object, \"save_as\": string},\n  \"finish\": {\"use\": \"var\"|\"message\", \"value\": string}\n}\n"
         "action과 finish는 동시에 제공하지 말고, 하나만 선택하세요.\n"
         "args에서는 제공된 변수들을 ${변수명} 형태로 참조할 수 있습니다(예: ${owner_id}, ${cat_id}).\n"
+        "참고: 직전 단계의 관찰 결과는 vars['_last_observation']로 제공될 수 있습니다. 저장하지 못했더라도 필요 시 ${_last_observation}로 참조하세요.\n"
     )
     # 도구 선택 규칙 힌트(절차 강제가 아닌 선택 원칙)
     sys_prompt += (
         "\n[도구 선택 규칙]\n"
-        "- 이미지 첨부가 있고 검사/혈액/수치/결과지 분석이 필요하면, 우선 이미지에서 텍스트를 확보하세요(예: ocr_image_file).\n"
-        "- 검사 결과를 구조화/해석하려면, OCR 결과(OCRResultEnvelope JSON)를 구조화 도구에 입력하세요(예: extract_lab_report).\n"
+        "- 이미지 첨부가 있고 검사/혈액/수치/결과지 분석이 필요하면, 통합 도구(extract_lab_report)에 이미지 경로(paths)를 직접 전달하세요.\n"
+        "- 중간 OCR 단계는 도구 내부에서 처리됩니다. 별도의 OCR 호출은 불필요합니다.\n"
         "- 실패 시 가능한 정보로 응답하고, 의료 조언은 정보 제공용임을 명시하세요.\n"
     )
     if pinned:
@@ -465,6 +529,19 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
         "JSON만 출력하세요."
     )
 
+    # Plan 시작 로깅
+    try:
+        _ORCH_LOGGER.info(
+            "[PLAN] iter=%s | request_head=%r | allowed_tools=%s | vars_keys=%s | history_len=%s",
+            iter_no,
+            (user_req[:140] if isinstance(user_req, str) else user_req),
+            [a.get("name") for a in available],
+            list((vars_map or {}).keys())[:16],
+            len(history),
+        )
+    except Exception:
+        pass
+
     decision: ReactDecision = {}
     try:
         msg = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}]
@@ -495,6 +572,28 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
         state["react_finish"] = finish
     else:
         state["react_finish"] = None
+
+    # Plan 결과 로깅
+    try:
+        if steps:
+            _a = steps[0]
+            _ORCH_LOGGER.info(
+                "[PLAN->ACTION] iter=%s | tool=%s | args=%s | save_as=%s",
+                iter_no,
+                _a.get("tool"),
+                _preview_data(_a.get("args")),
+                _a.get("save_as"),
+            )
+        elif finish:
+            _ORCH_LOGGER.info(
+                "[PLAN->FINISH] iter=%s | finish=%s",
+                iter_no,
+                _preview_data(finish),
+            )
+        else:
+            _ORCH_LOGGER.info("[PLAN] iter=%s | no action/finish produced", iter_no)
+    except Exception:
+        pass
     return state
 
 
@@ -513,12 +612,37 @@ async def react_execute_node(state: OrchestratorState, client) -> OrchestratorSt
         args = executed_step.get("args") or {}
         try:
             resolved_args = _resolve_vars(args, vars_map)
-            observation = await invoker.call(name, resolved_args)
+            # 실행 전 로깅 (resolved args 포함)
+            try:
+                _ORCH_LOGGER.info(
+                    "[EXECUTE] tool=%s | resolved_args=%s",
+                    name,
+                    _preview_data(resolved_args),
+                )
+            except Exception:
+                pass
+
+            # Local tool 우선 확인
+            local_matched = None
+            for lt in _build_local_tools(client):
+                if lt.name == name:
+                    local_matched = lt
+                    break
+            if local_matched is not None:
+                observation = await local_matched.ainvoke(resolved_args)
+            else:
+                observation = await invoker.call(name, resolved_args)
             ok = True
             # 결과 저장
             save_as = executed_step.get("save_as")
             if save_as:
                 vars_map[save_as] = observation
+            else:
+                # 자동 폴백 저장: 후속 단계에서 참조 가능하도록 마지막 관찰 값을 보관
+                try:
+                    vars_map["_last_observation"] = observation
+                except Exception:
+                    pass
             outs = dict(state.get("outputs") or {})
             outs[name] = observation
             state["outputs"] = outs
@@ -531,6 +655,19 @@ async def react_execute_node(state: OrchestratorState, client) -> OrchestratorSt
         used = list(state.get("tools_used") or [])
         used.append({"name": name, "args": args, "ok": ok})
         state["tools_used"] = used
+
+    # observation 로깅 (요약)
+    try:
+        if executed_step is not None:
+            _obs_preview = _preview_data(observation, 1000)
+            _ORCH_LOGGER.info(
+                "[OBSERVE] tool=%s | ok=%s | observation=%s",
+                (executed_step.get("tool") or ""),
+                ok,
+                _obs_preview,
+            )
+    except Exception:
+        pass
 
     # history 누적
     hist = list(state.get("react_history") or [])
@@ -557,6 +694,10 @@ async def react_self_eval_node(state: OrchestratorState, model) -> OrchestratorS
     # 이미 plan 단계에서 finish를 제안한 경우 우선 종료
     if finish_hint:
         state["react_should_continue"] = False
+        try:
+            _ORCH_LOGGER.info("[SELF-EVAL] finish-hint present → stopping")
+        except Exception:
+            pass
         return state
 
     sys_prompt = (
@@ -576,6 +717,10 @@ async def react_self_eval_node(state: OrchestratorState, model) -> OrchestratorS
         data = _json.loads(content)
         cont = bool(data.get("continue", False))
         state["react_should_continue"] = cont
+        try:
+            _ORCH_LOGGER.info("[SELF-EVAL] continue=%s | iter=%s/%s | history_len=%s", cont, iter_no, max_iters, len(history))
+        except Exception:
+            pass
     except Exception as e:
         errs = list(state.get("errors") or [])
         errs.append(f"react_self_eval_node: {e}")
@@ -587,36 +732,166 @@ async def react_self_eval_node(state: OrchestratorState, model) -> OrchestratorS
 def react_compose_node(state: OrchestratorState) -> OrchestratorState:
     """ReAct 루프 종료 시 사용자 메시지 생성."""
     finish = state.get("react_finish") or {}
+
+    # MergeEnvelope(JSON) 요약을 앞부분에 덧붙이는 보조 함수
+    def _render_merge_summary(prefix_src: Any) -> Optional[str]:
+        try:
+            import json as _json
+            if not prefix_src:
+                return None
+            # 문자열이면 JSON 파싱 시도
+            if isinstance(prefix_src, str):
+                try:
+                    env = _json.loads(prefix_src)
+                except Exception:
+                    return None
+            elif isinstance(prefix_src, dict):
+                env = prefix_src
+            else:
+                return None
+
+            if not isinstance(env, dict):
+                return None
+            stage = env.get("stage")
+            data = env.get("data") or {}
+            meta = env.get("meta") or {}
+            if stage != "merge":
+                # 병합 결과가 아니면 스킵
+                return None
+
+            lines: List[str] = []
+            # 메타데이터 섹션
+            if isinstance(meta, dict) and meta:
+                lines.append("메타데이터")
+                lines.append("")
+                for k, v in meta.items():
+                    try:
+                        lines.append(f"- {k}: {v}")
+                    except Exception:
+                        lines.append(f"- {k}: <unprintable>")
+                lines.append("")
+
+            # 검사항목 테이블 섹션
+            merged = (data or {}).get("merged")
+            if isinstance(merged, list) and merged:
+                # 선호 컬럼 순서
+                preferred = [
+                    "name", "test", "analyte",
+                    "value", "result", "unit",
+                    "flag", "abnormal",
+                    "reference", "reference_range", "ref_range", "low", "high",
+                ]
+                # 실제 항목들의 키 수집
+                keys = []
+                try:
+                    for item in merged[:12]:
+                        if isinstance(item, dict):
+                            for k in item.keys():
+                                if k not in keys:
+                                    keys.append(k)
+                except Exception:
+                    pass
+                # 표시할 컬럼 결정
+                show_cols = [c for c in preferred if c in keys]
+                # 최소 안전장치
+                if not show_cols and keys:
+                    show_cols = keys[:6]
+
+                if show_cols:
+                    # 마크다운 표 렌더링
+                    header = " | ".join(show_cols)
+                    sep = " | ".join(["---"] * len(show_cols))
+                    lines.append("검사항목")
+                    lines.append("")
+                    lines.append(header)
+                    lines.append(sep)
+                    for item in merged[:50]:  # 과도한 행 방지
+                        if not isinstance(item, dict):
+                            continue
+                        row = []
+                        for c in show_cols:
+                            val = item.get(c, "")
+                            try:
+                                s = str(val)
+                            except Exception:
+                                s = "<unprintable>"
+                            # 파이프/개행 최소 이스케이프
+                            s = s.replace("|", "\\|").replace("\n", " ")
+                            row.append(s)
+                        lines.append(" | ".join(row))
+                    lines.append("")
+
+            return "\n".join(lines) if lines else None
+        except Exception:
+            return None
     if isinstance(finish, dict):
         use = finish.get("use")
         value = finish.get("value")
         if use == "var":
             varname = str(value) if value is not None else ""
             if varname and varname in (state.get("vars") or {}):
-                state["message"] = f"결과: {(state.get('vars') or {}).get(varname)}"
+                base_msg = f"결과: {(state.get('vars') or {}).get(varname)}"
+                # 병합 결과 요약이 가능하면 앞에 붙임
+                merge_src = (state.get("vars") or {}).get(varname)
+                prefix = _render_merge_summary(merge_src)
+                state["message"] = (prefix + "\n\n" + base_msg) if prefix else base_msg
+                try:
+                    _ORCH_LOGGER.info("[COMPOSE] finish use=var | var=%s", varname)
+                except Exception:
+                    pass
                 return state
         if use == "message" and isinstance(value, str):
-            state["message"] = value
+            # 가능하면 마지막 출력 중 병합 결과를 찾아 앞에 붙임
+            outs = state.get("outputs") or {}
+            merge_src = None
+            # 우선 extract_lab_report 결과를 시도
+            if "extract_lab_report" in outs:
+                merge_src = outs.get("extract_lab_report")
+            elif outs:
+                # 최근 키의 값을 시도
+                merge_src = outs.get(list(outs.keys())[-1])
+            prefix = _render_merge_summary(merge_src)
+            state["message"] = (prefix + "\n\n" + value) if prefix else value
+            try:
+                _ORCH_LOGGER.info("[COMPOSE] finish use=message")
+            except Exception:
+                pass
             return state
 
-    # fallback: 마지막 관찰 또는 기존 compose_auto 로직과 유사하게 처리
+    # 폴백: 마지막 관찰 또는 기존 compose_auto 로직과 유사하게 처리
     hist = state.get("react_history") or []
     if hist and isinstance(hist[-1], dict):
         obs = hist[-1].get("observation")
         if obs is not None:
-            state["message"] = f"최종 관찰: {obs}"
+            base_msg = f"최종 관찰: {obs}"
+            prefix = _render_merge_summary(obs)
+            state["message"] = (prefix + "\n\n" + base_msg) if prefix else base_msg
+            try:
+                _ORCH_LOGGER.info("[COMPOSE] fallback last observation")
+            except Exception:
+                pass
             return state
 
-    # 추가 fallback: 마지막 출력 또는 오류/빈 결과 안내
+    # 추가 폴백: 마지막 출력 또는 오류/빈 결과 안내
     outs = state.get("outputs") or {}
     if outs:
         last_key = list(outs.keys())[-1]
-        state["message"] = f"{last_key} 결과: {outs.get(last_key)}"
+        base_msg = f"{last_key} 결과: {outs.get(last_key)}"
+        prefix = _render_merge_summary(outs.get(last_key))
+        state["message"] = (prefix + "\n\n" + base_msg) if prefix else base_msg
+        try:
+            _ORCH_LOGGER.info("[COMPOSE] fallback outputs last_key=%s", last_key)
+        except Exception:
+            pass
         return state
     if state.get("errors"):
         state["message"] = "요청을 처리하는 중 일부 단계에서 오류가 발생했습니다."
     else:
         state["message"] = "결과가 없습니다."
+    try:
+        _ORCH_LOGGER.info("[COMPOSE] fallback empty or errors present")
+    except Exception:
+        pass
     return state
 
 
@@ -677,7 +952,7 @@ async def run_react_rag(client, model, user_request: str, allowed_tools: Optiona
     }
     result: OrchestratorState = await app.ainvoke(init)
 
-    # Friendly fallback for small-talk: if compose ends up with no content, answer directly
+    # 스몰토크 친화 폴백: 합성 결과가 비어 있으면 직접 답변을 생성합니다.
     try:
         msg = result.get("message")
         outs = result.get("outputs") or {}

@@ -17,8 +17,8 @@ RUN conda activate meow-chat && conda list | head -n 5
 # Copy full project
 COPY . .
 
-# Expose MCP server ports
-EXPOSE 8000 8001 8002 8003
+# Expose MCP server ports (OCR Core removed; LabReport uses 8004)
+EXPOSE 8000 8001 8002 8004 8005
 
 # Start servers and keep alive
 CMD ["bash", "-lc", "source /root/.bashrc && conda activate meow-chat && bash backend/mcp_servers/start_servers.sh && tail -f /dev/null"]

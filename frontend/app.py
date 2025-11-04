@@ -160,56 +160,13 @@ def get_model_and_client():
 
 
 def run_ocr_on_images(paths: list[str], client) -> list[tuple[str, str]]:
+    """[Deprecated] 더 이상 사용되지 않습니다. OCR은 extract_lab_report 내부에서 수행됩니다.
+
+    이 함수는 호환성을 위해 남겨졌으며 빈 결과를 반환합니다.
+    """
     if not paths:
         return []
-
-    async def _run():
-        tools = await client.get_tools()
-        ocr_tool = None
-        for tool in tools:
-            if getattr(tool, "name", "") == "ocr_image_file":
-                ocr_tool = tool
-                break
-        if ocr_tool is None:
-            return []
-
-        try:
-            res = await ocr_tool.ainvoke({"paths": paths, "do_preprocess": True})
-        except Exception as exc:
-            err = json.dumps({"error": str(exc)}, ensure_ascii=False)
-            return [(path, err) for path in paths]
-
-        results = []
-        if isinstance(res, list):
-            for idx, item in enumerate(res):
-                path = paths[idx] if idx < len(paths) else ""
-                raw = ""
-                if isinstance(item, dict):
-                    path = str(item.get("path", path))
-                    if item.get("ocr_result"):
-                        raw = str(item.get("ocr_result"))
-                    elif item.get("error"):
-                        raw = json.dumps({"error": str(item.get("error"))}, ensure_ascii=False)
-                elif isinstance(item, str):
-                    raw = item
-                if not raw:
-                    raw = json.dumps({"error": "empty ocr result"}, ensure_ascii=False)
-                results.append((path, raw))
-        else:
-            txt = str(res)
-            for path in paths:
-                results.append((path, txt))
-        return results
-
-    try:
-        return asyncio.run(_run())
-    except RuntimeError:
-        # 이미 이벤트 루프가 있는 환경(Streamlit)에서 실행될 가능성 대비
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_run())
-        finally:
-            loop.close()
+    return [(p, "") for p in paths]
 
 
 with st.sidebar:
@@ -341,8 +298,8 @@ with st.sidebar:
         "get_weather", "get_forecast", "get_air_quality", "get_time_zone", "search_location",
         # Math
         "add", "subtract", "multiply", "divide", "convert_units", "calculate_percentage",
-        # OCR / Lab / Health (존재 시)
-        "ocr_image_file", "extract_lab_report", "extract_lab_table", "analyze_cat_health",
+    # Lab / Health (존재 시)
+    "extract_lab_report", "extract_lab_table", "analyze_cat_health",
     ]
     st.session_state.auto_allowed_tools = st.multiselect(
         "허용 도구(화이트리스트)",
@@ -539,7 +496,22 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
                     max_iters=int(st.session_state.react_max_iters),
                     extra_vars=extra_vars,
                 )
-                final_text = st.write_stream(text_stream)
+                # 첫 토큰이 나타날 때까지는 동그라미 스피너만 보여주고,
+                # 첫 토큰 이후에는 기존처럼 채팅 영역에 바로 스트리밍되도록 처리
+                first_chunk = None
+                with st.spinner("생각 중…"):
+                    try:
+                        first_chunk = next(text_stream)
+                    except StopIteration:
+                        first_chunk = None
+
+                def _chain_first(gen, first):
+                    if first is not None:
+                        yield first
+                    for chunk in gen:
+                        yield chunk
+
+                final_text = st.write_stream(_chain_first(text_stream, first_chunk))
 
                 now = datetime.now().strftime("%H:%M:%S")
                 for d in rec.get("tool_details", []):
@@ -648,7 +620,23 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
                 pinned_core_facts=pinned_text if (st.session_state.use_memory and st.session_state.pinned_core_enabled) else None,
             )
 
-            text = st.write_stream(stream_agent_generator(lc_messages, rec, model, client))
+            # 일반 스트리밍 경로에도 동일한 스피너 적용: 첫 토큰 전까지만 스피너 표시
+            _gen = stream_agent_generator(lc_messages, rec, model, client)
+
+            first_chunk2 = None
+            with st.spinner("생각 중…"):
+                try:
+                    first_chunk2 = next(_gen)
+                except StopIteration:
+                    first_chunk2 = None
+
+            def _chain_first2(gen, first):
+                if first is not None:
+                    yield first
+                for chunk in gen:
+                    yield chunk
+
+            text = st.write_stream(_chain_first2(_gen, first_chunk2))
 
             now = datetime.now().strftime("%H:%M:%S")
             for d in rec["tool_details"]:

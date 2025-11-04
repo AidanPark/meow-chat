@@ -5,8 +5,6 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-      args:
-        INSTALL_OCR_EXTRAS: "false"  # set to "true" to include OpenCV/PaddleOCR
     container_name: meowchat-backend-mcp
     environment:
       - DOCKER=1
@@ -20,14 +18,17 @@ services:
       - MCP_WEATHER_API_PORT=${MCP_WEATHER_API_PORT:-8001}
       - MCP_CAT_HEALTH_HOST=${MCP_CAT_HEALTH_HOST:-0.0.0.0}
       - MCP_CAT_HEALTH_PORT=${MCP_CAT_HEALTH_PORT:-8002}
-      - MCP_OCR_API_HOST=${MCP_OCR_API_HOST:-0.0.0.0}
-      - MCP_OCR_API_PORT=${MCP_OCR_API_PORT:-8003}
+      - MCP_EXTRACT_LAB_REPORT_HOST=${MCP_EXTRACT_LAB_REPORT_HOST:-0.0.0.0}
+      - MCP_EXTRACT_LAB_REPORT_PORT=${MCP_EXTRACT_LAB_REPORT_PORT:-8004}
+      - MCP_MEMORY_HOST=${MCP_MEMORY_HOST:-0.0.0.0}
+      - MCP_MEMORY_PORT=${MCP_MEMORY_PORT:-8005}
     ports:
       # Map host:container port using the same value so overrides stay in sync
       - "${MCP_MATH_UTILITY_PORT:-8000}:${MCP_MATH_UTILITY_PORT:-8000}"
       - "${MCP_WEATHER_API_PORT:-8001}:${MCP_WEATHER_API_PORT:-8001}"
       - "${MCP_CAT_HEALTH_PORT:-8002}:${MCP_CAT_HEALTH_PORT:-8002}"
-      - "${MCP_OCR_API_PORT:-8003}:${MCP_OCR_API_PORT:-8003}"
+      - "${MCP_EXTRACT_LAB_REPORT_PORT:-8004}:${MCP_EXTRACT_LAB_REPORT_PORT:-8004}"
+      - "${MCP_MEMORY_PORT:-8005}:${MCP_MEMORY_PORT:-8005}"
     volumes:
       - ./:/workspace
     working_dir: /workspace

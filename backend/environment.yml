@@ -11,7 +11,7 @@ dependencies:
 
   # 🔬 과학계산 & 이미지처리 (conda 추천 - 자동 최적화)
   - numpy<2.0                  # PaddleOCR 호환성 (2.x 불가)
-  - opencv                     # 복잡한 C++ 의존성 자동 해결
+  # OpenCV는 pip requirements.txt에서 설치 (opencv-contrib-python 계열)
   - matplotlib                 # 시각화
   - pandas                     # 데이터 분석  
   - pillow                     # 이미지 형식 지원

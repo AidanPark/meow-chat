@@ -11,9 +11,6 @@ servers:
   cat_health:
     url: http://localhost:8002/sse
     transport: sse
-  ocr_core:
-    url: http://localhost:8003/sse
-    transport: sse
   extract_lab_report:
     url: http://localhost:8004/sse
     transport: sse

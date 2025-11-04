@@ -28,8 +28,6 @@ WEATHER_HOST="${MCP_WEATHER_API_HOST:-${MCP_HOST:-127.0.0.1}}"
 WEATHER_PORT="${MCP_WEATHER_API_PORT:-${MCP_PORT:-8001}}"
 HEALTH_HOST="${MCP_CAT_HEALTH_HOST:-${MCP_HOST:-127.0.0.1}}"
 HEALTH_PORT="${MCP_CAT_HEALTH_PORT:-${MCP_PORT:-8002}}"
-CORE_HOST="${MCP_OCR_CORE_HOST:-${MCP_HOST:-127.0.0.1}}"
-CORE_PORT="${MCP_OCR_CORE_PORT:-${MCP_PORT:-8003}}"
 LAB_HOST="${MCP_EXTRACT_LAB_REPORT_HOST:-${MCP_HOST:-127.0.0.1}}"
 LAB_PORT="${MCP_EXTRACT_LAB_REPORT_PORT:-8004}"
 MEM_HOST="${MCP_MEMORY_HOST:-${MCP_HOST:-127.0.0.1}}"
@@ -79,11 +77,6 @@ if [ -f /tmp/health_server.pid ]; then
     rm /tmp/health_server.pid
 fi
 
-if [ -f /tmp/ocr_core_server.pid ]; then
-    CORE_PID=$(cat /tmp/ocr_core_server.pid)
-    kill $CORE_PID 2>/dev/null && echo "✅ OCR Core Server 종료됨 (PID: $CORE_PID)" || echo "⚠️ OCR Core 종료 실패"
-    rm /tmp/ocr_core_server.pid
-fi
 
 if [ -f /tmp/extract_lab_report_server.pid ]; then
     LAB_PID=$(cat /tmp/extract_lab_report_server.pid)
@@ -102,7 +95,6 @@ echo "🔍 남은 프로세스 정리 중..."
 pkill -f "math_utility_server.py" 2>/dev/null
 pkill -f "weather_api_server.py" 2>/dev/null
 pkill -f "cat_health_server.py" 2>/dev/null
-pkill -f "core_ocr_server.py" 2>/dev/null
 pkill -f "extract_lab_report_server.py" 2>/dev/null
 pkill -f "memory_server.py" 2>/dev/null
 
@@ -112,7 +104,6 @@ sleep 2
 kill_processes_by_port "$MATH_PORT" "Math & Utility"
 kill_processes_by_port "$WEATHER_PORT" "Weather & API"
 kill_processes_by_port "$HEALTH_PORT" "Cat Health"
-kill_processes_by_port "$CORE_PORT" "OCR Core"
 kill_processes_by_port "$LAB_PORT" "Lab Report OCR"
 kill_processes_by_port "$MEM_PORT" "Memory"
 
@@ -121,7 +112,6 @@ echo "📊 포트 사용 상태 확인:"
 echo "   🧮 Math & Utility: http://${MATH_HOST}:${MATH_PORT}"
 echo "   🌤️ Weather & API:   http://${WEATHER_HOST}:${WEATHER_PORT}"
 echo "   🐱 Cat Health:      http://${HEALTH_HOST}:${HEALTH_PORT}"
-echo "   🖼️ OCR Core:        http://${CORE_HOST}:${CORE_PORT}"
 echo "   🗂️ Lab Report OCR:  http://${LAB_HOST}:${LAB_PORT}"
 echo "   🧠 Memory:          http://${MEM_HOST}:${MEM_PORT}"
 if lsof -ti:${MATH_PORT} > /dev/null 2>&1; then
@@ -140,12 +130,6 @@ if lsof -ti:${HEALTH_PORT} > /dev/null 2>&1; then
     echo "⚠️ 포트 ${HEALTH_PORT}이(가) 여전히 사용 중입니다"
 else
     echo "✅ 포트 ${HEALTH_PORT} 해제됨"
-fi
-
-if lsof -ti:${CORE_PORT} > /dev/null 2>&1; then
-    echo "⚠️ 포트 ${CORE_PORT}이(가) 여전히 사용 중입니다"
-else
-    echo "✅ 포트 ${CORE_PORT} 해제됨"
 fi
 
 if lsof -ti:${LAB_PORT} > /dev/null 2>&1; then
