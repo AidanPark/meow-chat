@@ -80,7 +80,9 @@ def get_line_preprocessor() -> LinePreprocessor:
     라인 전처리기 싱글톤 반환 (기본 설정 적용)
     """
     _cfg = get_config()  # 향후 환경변수 기반 설정 확장 가능
-    settings = LineSettings(order="x_left", alpha=0.7, debug=True)
+    # 저수준 디버그 로그(예: grouped_lines_after_split) 노이즈를 줄이기 위해 기본 debug=False
+    # 상위 단계의 요약 디버그(Step 12/13)는 서버 측에서 별도 출력합니다.
+    settings = LineSettings(order="x_left", alpha=0.7, debug=False)
     return LinePreprocessor(settings=settings)
 
 # Extractor provider (factory: allow different settings per request if needed)

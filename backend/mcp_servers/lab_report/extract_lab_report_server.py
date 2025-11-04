@@ -158,8 +158,42 @@ async def extract_lab_report(paths: Sequence[str], do_preprocess: bool = True, d
             continue
 
         try:
-            extraction_env = lab_report_extractor.ocr_to_extraction(ocr_env)
-            extractions.append(extraction_env.data)
+            # 저수준 디버그는 비활성화하되, 고수준 디버그(Step 12/13)를 명시 출력
+            # 1) 라인 그룹핑 → 2) 인터미디엇 포함 추출 → 3) Step12/13 요약 출력 → 4) 최종 doc 수집
+            try:
+                _data = getattr(ocr_env, 'data', None)
+                _items = getattr(_data, 'items', None)
+                items = _items if isinstance(_items, list) else None
+                lined = lab_report_extractor.line_preproc.extract_and_group_lines(items[0] if items and len(items) > 0 else None)
+            except Exception as le:
+                raise RuntimeError(f"line grouping failed: {le}")
+
+            # 추출 + 인터미디엇
+            try:
+                result = lab_report_extractor.extractor.extract_from_lines(lined, return_intermediates=True)
+                if isinstance(result, tuple) and len(result) == 2:
+                    final_doc, intermediates = result
+                else:
+                    final_doc, intermediates = (result if isinstance(result, dict) else {}), {}
+            except Exception as ee:
+                raise RuntimeError(f"extraction failed: {ee}")
+
+            # 디버그 출력: Step 12 / Step 13 (이미지별)
+            try:
+                step12_txt = lab_report_extractor.extractor.debug_step12(intermediates)
+                if step12_txt:
+                    logger.info("\n===== [Image %d] Step 12 =====\n%s\n", idx + 1, step12_txt)
+            except Exception:
+                pass
+            try:
+                step13_txt = lab_report_extractor.extractor.debug_step13(intermediates)
+                if step13_txt:
+                    logger.info("\n===== [Image %d] Step 13 =====\n%s\n", idx + 1, step13_txt)
+            except Exception:
+                pass
+
+            # 최종 문서 수집 (이전 ocr_to_extraction과 동일한 형식 보장)
+            extractions.append(final_doc if isinstance(final_doc, dict) else {})
         except Exception as exc:
             logger.exception("extraction 실패: path=%s", path)
             failures.append({"index": idx, "path": path, "error": f"extraction_failed: {exc}"})
@@ -177,6 +211,11 @@ async def extract_lab_report(paths: Sequence[str], do_preprocess: bool = True, d
 
     try:
         merged_env: MergeEnvelope = lab_report_extractor.merge_extractions(extractions)
+        # 최종 병합 JSON을 서버 콘솔에 출력
+        try:
+            logger.info("\n===== Final Merged JSON =====\n%s\n", merged_env.model_dump_json(indent=2, ensure_ascii=False))
+        except Exception:
+            pass
         return merged_env.model_dump_json(indent=2, ensure_ascii=False)
     except Exception as exc:  # pragma: no cover
         logger.error("merge_extractions 실패: %s", exc)

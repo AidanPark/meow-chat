@@ -208,6 +208,17 @@ class LabReportExtractor:
         keys = ['hospital_name', 'client_name', 'patient_name', 'header_shape']
         return all(LabReportExtractor._norm_blank(a.get(k)) == LabReportExtractor._norm_blank(b.get(k)) for k in keys)
 
+    # 완화된 병합 판단을 위한 유틸
+    @staticmethod
+    def _same_header_shape(a: dict, b: dict) -> bool:
+        return LabReportExtractor._norm_blank(a.get('header_shape')) == LabReportExtractor._norm_blank(b.get('header_shape'))
+
+    @staticmethod
+    def _dates_equal_nonempty(a: dict, b: dict) -> bool:
+        da = LabReportExtractor._norm_blank(a.get('inspection_date'))
+        db = LabReportExtractor._norm_blank(b.get('inspection_date'))
+        return bool(da) and bool(db) and (da == db)
+
     @staticmethod
     def _dedup_tests_by_code_unit(tests: list) -> list:
         if not isinstance(tests, list):
@@ -238,7 +249,17 @@ class LabReportExtractor:
                 _merged.append(dict(cur))
                 continue
             prev = _merged[-1]
-            if self._non_empty_date(prev) and self._empty_date(cur) and self._meta_equal(prev, cur):
+            # 완화된 병합 규칙:
+            # - header_shape 동일이고,
+            #   (1) prev에 날짜가 있고 cur은 비어 있거나
+            #   (2) prev와 cur의 날짜가 모두 존재하며 동일하면
+            #   → 같은 문서로 간주하고 tests를 병합
+            if (
+                self._same_header_shape(prev, cur) and (
+                    (self._non_empty_date(prev) and self._empty_date(cur)) or
+                    self._dates_equal_nonempty(prev, cur)
+                )
+            ):
                 prev_tests = prev.get('tests')
                 if not isinstance(prev_tests, list):
                     prev_tests = []
@@ -283,7 +304,12 @@ class LabReportExtractor:
                 _merged.append(dict(cur))
                 continue
             prev = _merged[-1]
-            if self._non_empty_date(prev) and self._empty_date(cur) and self._meta_equal(prev, cur):
+            if (
+                self._same_header_shape(prev, cur) and (
+                    (self._non_empty_date(prev) and self._empty_date(cur)) or
+                    self._dates_equal_nonempty(prev, cur)
+                )
+            ):
                 prev_tests = prev.get('tests')
                 if not isinstance(prev_tests, list):
                     prev_tests = []
