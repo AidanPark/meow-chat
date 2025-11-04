@@ -61,3 +61,7 @@ Thumbs.db
 
 # Project-specific: exclude OCR outputs
 notebooks/ocr/result/
+
+# Frontend user uploads (exclude binary uploads from version control)
+frontend/uploads/*
+!frontend/uploads/.gitkeep
