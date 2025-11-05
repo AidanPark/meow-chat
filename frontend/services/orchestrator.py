@@ -47,9 +47,8 @@ Meow Chat 오케스트레이터 (LangGraph 기반)
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, TypedDict, Union, Callable, Awaitable
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Callable, Awaitable
 import json as _json
 import logging
 import os
@@ -104,7 +103,7 @@ class OrchestratorState(TypedDict, total=False):
 
 
 # -----------------------------
-# Logging (orchestrator strategy & tool calls)
+# 로깅(오케스트레이터 전략 & 도구 호출)
 # -----------------------------
 _ORCH_LOGGER = logging.getLogger("meow.frontend.orchestrator")
 if not _ORCH_LOGGER.handlers:
@@ -481,7 +480,7 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
         "형식:\n"
         "{\n  \"action\": {\"tool\": string, \"args\": object, \"save_as\": string},\n  \"finish\": {\"use\": \"var\"|\"message\", \"value\": string}\n}\n"
         "action과 finish는 동시에 제공하지 말고, 하나만 선택하세요.\n"
-        "args에서는 제공된 변수들을 ${변수명} 형태로 참조할 수 있습니다(예: ${owner_id}, ${cat_id}).\n"
+    "args에서는 제공된 변수들을 ${변수명} 형태로 참조할 수 있습니다(예: ${user_id}).\n"
         "참고: 직전 단계의 관찰 결과는 vars['_last_observation']로 제공될 수 있습니다. 저장하지 못했더라도 필요 시 ${_last_observation}로 참조하세요.\n"
     )
     # 도구 선택 규칙 힌트(절차 강제가 아닌 선택 원칙)

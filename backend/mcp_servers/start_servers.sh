@@ -57,8 +57,8 @@ MEM_HOST="${MCP_MEMORY_HOST:-${MCP_HOST:-127.0.0.1}}"
 MEM_PORT="${MCP_MEMORY_PORT:-8005}"
 
 # 각 서버를 백그라운드에서 실행
-echo "1️⃣ Math & Utility Server 시작 (${MATH_HOST}:${MATH_PORT})..."
-cd "$SCRIPT_DIR/utility"
+echo "1️⃣ Math Server 시작 (${MATH_HOST}:${MATH_PORT})..."
+cd "$SCRIPT_DIR/math"
 python math_utility_server.py &
 MATH_PID=$!
 
@@ -90,9 +90,9 @@ sleep 10
 echo "🔍 서버 상태 확인 중..."
 
 if curl -s http://${MATH_HOST}:${MATH_PORT}/health > /dev/null 2>&1; then
-    echo "✅ Math & Utility Server (${MATH_HOST}:${MATH_PORT}) - 정상"
+    echo "✅ Math Server (${MATH_HOST}:${MATH_PORT}) - 정상"
 else
-    echo "❌ Math & Utility Server (${MATH_HOST}:${MATH_PORT}) - 오류"
+    echo "❌ Math Server (${MATH_HOST}:${MATH_PORT}) - 오류"
 fi
 
 if curl -s http://${WEATHER_HOST}:${WEATHER_PORT}/health > /dev/null 2>&1; then
@@ -123,7 +123,7 @@ echo ""
 echo "🎉 Multi-MCP Server 시스템이 실행되었습니다!"
 echo ""
 echo "📊 서버 정보:"
-echo "   🧮 Math & Utility: http://${MATH_HOST}:${MATH_PORT}"
+echo "   🧮 Math:             http://${MATH_HOST}:${MATH_PORT}"
 echo "   🌤️ Weather & API:   http://${WEATHER_HOST}:${WEATHER_PORT}"
 echo "   🐱 Cat Health:      http://${HEALTH_HOST}:${HEALTH_PORT}"
 echo "   🗂️ Lab Report OCR:  http://${LAB_HOST}:${LAB_PORT}"

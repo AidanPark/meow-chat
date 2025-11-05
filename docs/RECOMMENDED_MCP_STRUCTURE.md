@@ -6,11 +6,8 @@ meow-chat/
 │   ├── config/                     # MCP 서버 설정
 │   │   ├── server_registry.py     # 서버 등록/관리
 │   │   └── transport_config.py    # 전송 방식 설정
-│   ├── health_analysis/            # 건강 분석 서버군
-│   │   ├── blood_analysis_server.py
-│   │   ├── image_ocr_server.py
-│   │   ├── lab_extraction_server.py
-│   │   └── normalization_server.py
+│   ├── health/                     # 건강 분석 서버군(통합)
+│   │   └── cat_health_server.py    # 건강 분석 도구(혈액/판정/요약 등)
 │   ├── knowledge/                  # 지식베이스 서버군
 │   │   ├── veterinary_kb_server.py
 │   │   ├── medical_guidelines_server.py
@@ -25,7 +22,7 @@ meow-chat/
 │       └── logging_utils.py
 ├── app/                            # 기존 앱 로직 (MCP 클라이언트로 변환)
 │   ├── mcp_clients/               # 새로 추가: MCP 클라이언트
-│   │   ├── health_analysis_client.py
+│   │   ├── cat_health_client.py
 │   │   └── app.py
 │   └── web/                       # 웹 인터페이스
 │       ├── streamlit_app.py

@@ -39,7 +39,7 @@ def maybe_update_summary(
     if not old_part:
         return summary_text, messages
 
-    # Build plain text for summarization
+    # 요약을 위한 평문 텍스트 구성
     old_text = []
     for role, content in old_part:
         role_k = "사용자" if role == "user" else "어시스턴트"
@@ -69,5 +69,5 @@ def maybe_update_summary(
             merged = new_summary.strip()
         return merged, recent_part
     except Exception:
-        # On failure, keep prior summary and full messages
+        # 실패 시 기존 요약과 전체 메시지를 그대로 유지
         return summary_text, messages

@@ -33,3 +33,21 @@ services:
       - ./:/workspace
     working_dir: /workspace
     restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: meowchat-frontend
+    environment:
+      - DOCKER=1
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./:/workspace
+      # Override MCP config inside container to talk to backend-mcp service name
+      - ./frontend/config/mcp_servers.docker.yml:/workspace/frontend/config/mcp_servers.yml:ro
+    working_dir: /workspace
+    depends_on:
+      - backend-mcp
+    restart: unless-stopped

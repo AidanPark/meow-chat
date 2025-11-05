@@ -7,16 +7,14 @@ Meow Chat 프론트엔드
 
 import os
 import sys
-import asyncio
-import time
 from datetime import datetime
 import io
-import json
+import re
 import streamlit as st
+import streamlit.components.v1 as components
 
 # MCP 서버와 연결하는 LangChain 어댑터
 from langchain_mcp_adapters.client import MultiServerMCPClient
-
 
 from dotenv import load_dotenv, find_dotenv
 
@@ -29,32 +27,147 @@ UPLOAD_ROOT = os.path.join(CURRENT_DIR, "uploads")
 
 # 프론트엔드 서비스/설정 모듈
 from config.loader import load_mcp_server_config
-from config.defaults import RECENT_TURN_WINDOW, SUMMARIZE_TRIGGER_TURNS, RETRIEVAL_TOP_K
+from config.defaults import (
+    RECENT_TURN_WINDOW,
+    SUMMARIZE_TRIGGER_TURNS,
+    RETRIEVAL_TOP_K,
+)
 from services.streaming import stream_react_rag_generator
 from ui.styles import inject_core_css
-# Legacy memory helpers no longer needed in app-level pipeline (kept server-side)
 from services.memory.core_facts import build_pinned_core_facts_block
 from services.memory.memory_search import search_memories, MEMORY_TYPES
-# from services.orchestrator import run_react_rag  # no longer imported here
-
-# ---------------------------------------------------------------------------
-# 전체 UI 흐름 안내
-# 1) 전역 설정: .env와 MCP 서버 설정을 불러오고, Streamlit 페이지 옵션과 CSS를 적용한다.
-# 2) 세션 상태 초기화: 메시지, 요약, 메모리, 업로드된 이미지 등 대화 유지에 필요한 상태 값을 준비한다.
-# 3) Sidebar:
-#    - 프로필 전환 및 새 네임스페이스 생성
-#    - 이미지 업로드 관리
-#    - 장기 메모리/핵심 사실 관련 슬라이더와 스위치
-#    - 환경 진단(필수 패키지 설치 여부), 메모리 검색 도구
-# 4) 메인 영역:
-#    - 과거 메시지를 순서대로 렌더링
-#    - 사용자 입력을 받으면 메시지 목록에 추가하고, LangGraph 에이전트를 비동기로 실행
-#    - 실행 도중 stream_agent_generator 가 토큰을 streaming 하며, 완료 후 요약 및 메모리 저장 로직 수행
-# 5) 대화 종료 후 UI는 마지막 응답, 사용된 도구, 요약 결과, 메모리 기록 등을 세션 상태로 관리한다.
-# ---------------------------------------------------------------------------
+from services.memory.memory_writer import extract_candidates
+from services.memory.memory_retriever import write_memories
 
 # 실행 환경 변수 로드
 load_dotenv(find_dotenv())
+
+# =====================
+# 상수 및 유틸리티
+# =====================
+
+LOG_PANEL_HEIGHT = 400
+LOG_MAX_LINES = 1000
+LOG_PREFIX_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+\[[A-Z]+\]\s+[^:]+:\s*"
+)
+
+def init_state() -> None:
+    ss = st.session_state
+    if "messages" not in ss:
+        ss.messages = []
+    if "uploaded_images" not in ss:
+        ss.uploaded_images = []
+    if "tool_history" not in ss:
+        ss.tool_history = []
+    if "previous_uploaded_count" not in ss:
+        ss.previous_uploaded_count = 0
+    if "user_id" not in ss:
+        ss.user_id = os.getenv("USER", "default")
+    if "retrieval_top_k" not in ss:
+        ss.retrieval_top_k = RETRIEVAL_TOP_K
+    if "recent_turn_window" not in ss:
+        ss.recent_turn_window = RECENT_TURN_WINDOW
+    if "summarize_trigger_turns" not in ss:
+        ss.summarize_trigger_turns = SUMMARIZE_TRIGGER_TURNS
+    if "last_retrieved_memories" not in ss:
+        ss.last_retrieved_memories = []
+    if "last_saved_memory_ids" not in ss:
+        ss.last_saved_memory_ids = []
+    if "last_saved_memories" not in ss:
+        ss.last_saved_memories = []
+    if "memory_token_budget" not in ss:
+        ss.memory_token_budget = 1200
+    if "memory_item_token_cap" not in ss:
+        ss.memory_item_token_cap = 150
+    if "pinned_token_budget" not in ss:
+        ss.pinned_token_budget = 400
+    if "manual_injected_memories" not in ss:
+        ss.manual_injected_memories = []
+    # 단일 프로필 사용: profiles/active_profile 상태는 유지하지 않습니다.
+    if "react_max_iters" not in ss:
+        ss.react_max_iters = 4
+    # 개체 선택(보호자/고양이) 기능 제거: owner_id/cat_id 상태는 사용하지 않습니다.
+    # 미리보기 상태는 사용하지 않습니다(미리보기는 즉시 생성 방식으로 표시).
+    if "_uploader_nonce" not in ss:
+        ss._uploader_nonce = 0
+    if "summary_text" not in ss:
+        ss.summary_text = None
+    ss.setdefault("orch_logs_accum", [])
+    ss.setdefault("_orch_last_line", None)
+
+def render_progress_html(placeholder, text: str) -> None:
+    try:
+        import html as _html
+        _raw = text or ""
+        _stripped = "\n".join(LOG_PREFIX_RE.sub("", ln) for ln in _raw.splitlines())
+        safe = _html.escape(_stripped)
+    except Exception:
+        safe = (text or "")
+    html_block = f"""
+<div id=\"orch-logbox\" style=\"height: {LOG_PANEL_HEIGHT}px; overflow: auto; white-space: pre; 
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; 
+        background-color: #0e1117; color: #e6e6e6; padding: 8px; border-radius: 6px; 
+        border: 1px solid rgba(255,255,255,0.1);\">{safe}</div>
+    <script>
+    (function() {{
+        var el = document.getElementById('orch-logbox');
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+    }})();
+    </script>
+    """
+    try:
+        with placeholder.container():
+            components.html(html_block, height=LOG_PANEL_HEIGHT)
+    except Exception:
+        try:
+            placeholder.markdown(html_block, unsafe_allow_html=True)
+        except Exception:
+            try:
+                placeholder.write(text or "")
+            except Exception:
+                pass
+
+def merge_ring_into_session(rec: dict) -> None:
+    try:
+        ring = rec.get("orchestrator_logs")
+        if ring is None:
+            return
+        ring_list = list(ring)
+        if not ring_list:
+            return
+        acc = st.session_state.setdefault("orch_logs_accum", [])
+        last_seen = st.session_state.get("_orch_last_line")
+        start_idx = -1
+        if last_seen is not None:
+            try:
+                start_idx = ring_list.index(last_seen)
+            except ValueError:
+                start_idx = -1
+        new_lines = ring_list[start_idx + 1 :] if start_idx >= 0 else ring_list
+        if new_lines:
+            acc.extend(new_lines)
+            if len(acc) > LOG_MAX_LINES:
+                acc[:] = acc[-LOG_MAX_LINES:]
+            st.session_state["orch_logs_accum"] = acc
+            st.session_state["_orch_last_line"] = ring_list[-1]
+    except Exception:
+        pass
+
+def append_turn_divider(progress_placeholder) -> None:
+    try:
+        acc = st.session_state.setdefault("orch_logs_accum", [])
+        sep_line = (
+            f"──── {datetime.now().strftime('%H:%M:%S')} ─────────────────────────────────"
+        )
+        acc.append(sep_line)
+        if len(acc) > LOG_MAX_LINES:
+            acc[:] = acc[-LOG_MAX_LINES:]
+        st.session_state["orch_logs_accum"] = acc
+        render_progress_html(progress_placeholder, "\n".join(acc[-LOG_MAX_LINES:]))
+    except Exception:
+        pass
 
 # 스트림릿 페이지 속성 구성
 st.set_page_config(page_title="Meow Chat", page_icon="🐱", layout="wide")
@@ -70,94 +183,405 @@ def _uploader_key() -> str:
     return f"sidebar_image_uploader_{st.session_state.get('_uploader_nonce', 0)}"
 
 def _clear_sidebar_uploader_state():
-    # 위젯 상태 자체를 제거하여 다음 렌더에서 완전히 초기화되도록 함
     try:
         curr_key = _uploader_key()
         st.session_state.pop(curr_key, None)
     except Exception:
         pass
-    # 내부 보관 리스트도 함께 초기화
     st.session_state.uploaded_images = []
     st.session_state.previous_uploaded_count = 0
-    # 새 키로 리마운트되도록 nonce 증가
     st.session_state["_uploader_nonce"] = int(st.session_state.get("_uploader_nonce", 0)) + 1
-    # 디버그 로그
     try:
-        print(f"[DEBUG] _clear_sidebar_uploader_state(): cleared, new _uploader_nonce={st.session_state.get('_uploader_nonce')}")
+        print(
+            f"[DEBUG] _clear_sidebar_uploader_state(): cleared, new _uploader_nonce={st.session_state.get('_uploader_nonce')}"
+        )
     except Exception:
         pass
 
 # 세션 상태 기본값 초기화
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "uploaded_images" not in st.session_state:
-    st.session_state.uploaded_images = []
-if "tool_history" not in st.session_state:
-    st.session_state.tool_history = []
-if "previous_uploaded_count" not in st.session_state:
-    st.session_state.previous_uploaded_count = 0
-if "user_id" not in st.session_state:
-    st.session_state.user_id = os.getenv("USER", "default")
-if "use_memory" not in st.session_state:
-    st.session_state.use_memory = True
-if "retrieval_top_k" not in st.session_state:
-    st.session_state.retrieval_top_k = RETRIEVAL_TOP_K
-if "recent_turn_window" not in st.session_state:
-    st.session_state.recent_turn_window = RECENT_TURN_WINDOW
-if "summarize_trigger_turns" not in st.session_state:
-    st.session_state.summarize_trigger_turns = SUMMARIZE_TRIGGER_TURNS
-if "last_retrieved_memories" not in st.session_state:
-    st.session_state.last_retrieved_memories = []
-if "last_saved_memory_ids" not in st.session_state:
-    st.session_state.last_saved_memory_ids = []
-if "last_saved_memories" not in st.session_state:
-    st.session_state.last_saved_memories = []
-if "memory_token_budget" not in st.session_state:
-    st.session_state.memory_token_budget = 1200
-if "memory_item_token_cap" not in st.session_state:
-    st.session_state.memory_item_token_cap = 150
-if "pinned_core_enabled" not in st.session_state:
-    st.session_state.pinned_core_enabled = True
-if "pinned_token_budget" not in st.session_state:
-    st.session_state.pinned_token_budget = 400
-if "manual_injected_memories" not in st.session_state:
-    st.session_state.manual_injected_memories = []
-if "profiles" not in st.session_state:
-    st.session_state.profiles = [st.session_state.user_id or "default"]
-if "active_profile" not in st.session_state:
-    st.session_state.active_profile = st.session_state.user_id
-if "_prev_active_profile" not in st.session_state:
-    st.session_state._prev_active_profile = st.session_state.active_profile
-if "auto_allowed_tools" not in st.session_state:
-    st.session_state.auto_allowed_tools = []
-if "react_max_iters" not in st.session_state:
-    st.session_state.react_max_iters = 4
-if "owner_id" not in st.session_state:
-    st.session_state.owner_id = ""
-if "cat_id" not in st.session_state:
-    st.session_state.cat_id = ""
-if "pinned_preview" not in st.session_state:
-    st.session_state.pinned_preview = None
-if "_uploader_nonce" not in st.session_state:
-    st.session_state._uploader_nonce = 0
-if "summary_text" not in st.session_state:
-    st.session_state.summary_text = None
+init_state()
 
-# 사이드바 진행 로그용 플레이스홀더 (동일 런에서 실시간 업데이트)
-from typing import Any as _Any
-progress_logs_area: _Any = None
+
+def render_sidebar() -> None:
+    """사이드바 전체 UI를 렌더링하고 진행 로그 표시용 플레이스홀더를 초기화합니다."""
+    global progress_logs_area
+    with st.sidebar:
+        st.title("🐱 Meow Chat")
+        # 단일 프로필 사용: 제목에 프로필명을 직접 표시
+        st.subheader(f"👤 {st.session_state.user_id}")
+
+        st.divider()
+
+        st.subheader("📎 이미지 업로드")
+        uploaded_files = st.file_uploader(
+            "대화에 첨부할 이미지",
+            type=["png", "jpg", "jpeg", "gif", "webp"],
+            accept_multiple_files=True,
+            key=_uploader_key(),
+        )
+        # Streamlit은 초기에는 None, 위젯 초기화/클리어 시 빈 리스트([])를 반환할 수 있습니다.
+        if uploaded_files is not None:
+            if len(uploaded_files) > 0:
+                stored: list[io.BytesIO] = []
+                for file in uploaded_files:
+                    data = file.getvalue()
+                    buf = io.BytesIO(data)
+                    buf.name = file.name  # type: ignore[attr-defined]
+                    stored.append(buf)
+                st.session_state.uploaded_images = stored
+                st.session_state.previous_uploaded_count = len(stored)
+            else:
+                # 사용자가 명시적으로 X 버튼으로 비웠을 때만 초기화
+                if st.session_state.previous_uploaded_count > 0 or st.session_state.uploaded_images:
+                    _clear_sidebar_uploader_state()
+
+        st.divider()
+        st.subheader("🤖 오케스트레이션 (ReAct)")
+        st.session_state.react_max_iters = st.slider(
+            "ReAct 최대 반복",
+            min_value=1,
+            max_value=12,
+            value=int(st.session_state.react_max_iters),
+            help=(
+                "에이전트가 생각(Reason)·행동(Act) 사이클을 수행하는 최대 횟수입니다.\n"
+                "- 높음: 복잡한 멀티스텝 문제 해결에 유리, 도구 호출/비용/지연↑\n"
+                "- 낮음: 빠르고 저비용, 필요한 도구 호출을 다 못 할 수 있음\n"
+                "권장: 3~6"
+            ),
+        )
+
+        st.subheader("🔎 오케스트레이션 로그")
+        progress_logs_area = st.empty()
+        try:
+            render_progress_html(
+                progress_logs_area,
+                "\n".join(st.session_state.get("orch_logs_accum", [])[-LOG_MAX_LINES:]),
+            )
+        except Exception:
+            render_progress_html(progress_logs_area, "")
+
+
+        st.divider()
+        st.subheader("🧠 메모리 설정")
+
+        st.session_state.retrieval_top_k = st.slider(
+            "검색 Top-K",
+            min_value=1,
+            max_value=20,
+            value=int(st.session_state.retrieval_top_k),
+            help=(
+                "메모리/지식 검색 시 한 번에 가져올 최대 항목 수입니다.\n"
+                "- 높음: 회상률(Recall)↑, 잡음/비용↑\n"
+                "- 낮음: 정확도(Precision)↑ 가능, 놓칠 위험↑\n"
+                "권장: 5~10"
+            ),
+        )
+        st.session_state.recent_turn_window = st.slider(
+            "최근 턴 창 크기",
+            min_value=3,
+            max_value=20,
+            value=int(st.session_state.recent_turn_window),
+            help=(
+                "자동 메모리 추출·요약에서 참조하는 최근 대화 턴 창 크기입니다.\n"
+                "값 n은 사용자/어시스턴트 페어 기준으로 약 2n개의 메시지를 커버합니다.\n"
+                "- 큼: 더 많은 맥락 반영, 비용/지연↑\n"
+                "- 작음: 최신성↑, 맥락 누락 가능\n"
+                "권장: 8~12"
+            ),
+        )
+        st.session_state.summarize_trigger_turns = st.slider(
+            "요약 트리거 턴 수",
+            min_value=5,
+            max_value=40,
+            value=int(st.session_state.summarize_trigger_turns),
+            help=(
+                "대화가 길어졌을 때 이전 메시지를 요약(압축)하기 시작하는 임계 턴 수입니다.\n"
+                "이 값을 넘으면 오래된 구간부터 요약 블록에 합쳐 저장합니다.\n"
+                "- 낮음: 메모리 사용량↓, 상세 맥락 손실↑\n"
+                "- 높음: 맥락 유지↑, 비용/지연↑\n"
+                "권장: 10~20"
+            ),
+        )
+        st.session_state.memory_token_budget = st.slider(
+            "메모리 블록 최대 토큰",
+            min_value=200,
+            max_value=4000,
+            value=int(st.session_state.memory_token_budget),
+            step=50,
+            help=(
+                "대화 요약/검색으로 구성되는 일반 메모리 블록의 전체 길이(토큰) 상한입니다. "
+                "이 한도를 넘으면 오래된 턴을 우선 압축하거나 생략합니다."
+            ),
+        )
+        st.session_state.memory_item_token_cap = st.slider(
+            "항목당 토큰 상한 (단일 항목 요약 길이)",
+            min_value=50,
+            max_value=300,
+            value=int(st.session_state.memory_item_token_cap),
+            step=10,
+            help=(
+                "개인화 컨텍스트를 구성할 때 각 항목(프로필/알레르기/약/식단 등)이 자신에게 배정받는 최대 길이(토큰)입니다.\n"
+                "- 낮게 설정: 더 많은 항목을 담을 수 있으나, 문장이 중간에서 잘릴 수 있음\n"
+                "- 높게 설정: 각 항목이 더 자세히 유지되지만, 전체 컨텍스트가 길어질 수 있음\n"
+                "권장: 120~200\n"
+                "예시) 150으로 설정하면 각 항목은 대략 2~3문장 길이 내에서 잘려 들어갑니다. 중요도/최근성이 낮은 항목은 우선순위에서 밀릴 수 있습니다."
+            ),
+        )
+        st.session_state.pinned_token_budget = st.slider(
+            "개인화 컨텍스트 토큰 (전체 한도)",
+            min_value=100,
+            max_value=1000,
+            value=int(st.session_state.pinned_token_budget),
+            step=50,
+            help=(
+                "프롬프트에 항상 주입되는 개인화 컨텍스트(고정 블록)의 전체 길이(토큰) 상한입니다.\n"
+                "- 초과 시: 항목을 중요도/최근성 기준으로 선별해 일부만 포함합니다.\n"
+                "- 영향: 모델 호출 당 비용/지연에 직접 영향합니다. 높을수록 개인화 품질이 오르지만 느려질 수 있습니다.\n"
+                "권장: 300~600\n"
+                "Tip) 개인화 컨텍스트 토큰을 키우면 회상 능력은 좋아지지만 응답 속도와 비용이 올라갑니다. 작업 성격에 맞춰 균형점을 찾으세요."
+            ),
+        )
+        st.session_state.setdefault("pinned_max_queries", 6)
+        st.session_state.pinned_max_queries = st.slider(
+            "개인화 컨텍스트 검색 강도(질의 수)",
+            min_value=3,
+            max_value=12,
+            value=int(st.session_state.pinned_max_queries),
+            help=(
+                "개인화 컨텍스트를 만들 때 사용하는 '키워드 기반 다중 검색'의 횟수입니다.\n"
+                "- 동작: 프로필/알레르기/만성/금기/약/식단 등의 키워드에서 앞쪽 n개를 골라 n회 검색 → 결과 합치기 → 중복 제거 → 토큰 규칙으로 트리밍\n"
+                "- 위치: 장기 메모리 벡터DB(Chroma)에서 유사도 검색을 수행합니다.\n"
+                "- 높음(n↑): 더 다양한 카테고리에서 항목 회수(회상률↑), 대신 검색 횟수만큼 지연/비용↑\n"
+                "- 낮음(n↓): 빠르고 저비용, 특정 카테고리 정보가 덜 들어올 수 있음\n"
+                "- 팁: 미리보기에서 특정 범주(예: 알레르기)가 자주 빠지면 n을 1~2 올려보세요.\n"
+                "권장: 4~8 (카테고리가 많을수록 ↑, 속도가 중요하면 ↓)"
+            ),
+        )
+
+        st.subheader("📌 개인화 컨텍스트 (미리보기)")
+        st.caption("항상 프롬프트에 포함되는 개인화된 핵심 정보 요약입니다.")
+        st.markdown(
+            """
+            - profile: 이름, 연령, 성별, 품종, 중성화, 몸무게, 성격 등 기본 프로필
+            - allergy: 알레르기·과민·부작용 (예: “닭고기 알레르기”)
+            - chronic: 만성질환·진단·병력
+            - contraindication: 금기·주의
+            - medication: 약/투약/용량
+            - diet: 식단·사료·영양제
+            - preference: 선호/비선호
+            - constraint: 제약·제한
+            - decision: 결정/합의
+            - todo: 해야 할 일
+            - timeline: 과거 기록/이력
+            - fact, note: 일반 사실/노트
+            """
+        )
+        # 자동 미리보기 생성(버튼 없이 즉시 표시)
+        _preview_text = None
+        try:
+            model, _client = get_model_and_client()
+            _preview_text = build_pinned_core_facts_block(
+                user_id=st.session_state.user_id,
+                user_message="",
+                summary_text=st.session_state.get("summary_text"),
+                model=model,
+                max_tokens=int(st.session_state.get("pinned_token_budget", 400)),
+                per_item_cap=int(st.session_state.get("memory_item_token_cap", 150)),
+                max_queries=int(st.session_state.get("pinned_max_queries", 6)),
+                importance_min=0.8,
+            )
+        except Exception as e:
+            st.warning(f"미리보기 실패: {e}")
+        if _preview_text:
+            st.text_area("개인화 컨텍스트", value=_preview_text, height=220, key="ta_pinned_preview")
+        else:
+            st.caption("미리보기가 없습니다. 설정을 조정하거나 대화를 진행해 보세요.")
+
+        st.divider()
+    # 개체 선택(보호자/고양이) UI 제거
+        with st.expander("📜 타임라인 · 메모리 검색", expanded=False):
+            q = st.text_input("키워드", key="mem_search_query", placeholder="예: 예방접종, 알레르기, 사료")
+            col1, col2 = st.columns(2)
+            with col1:
+                yf = st.number_input("연도(시작)", value=0, min_value=0, max_value=9999, step=1)
+            with col2:
+                yt = st.number_input("연도(종료)", value=0, min_value=0, max_value=9999, step=1)
+            year_from = int(yf) if yf else None
+            year_to = int(yt) if yt else None
+            types = st.multiselect("유형 필터", options=MEMORY_TYPES, default=[])
+            limit = st.slider("최대 표시 수", min_value=10, max_value=200, value=50, step=10)
+            if st.button("검색", use_container_width=True):
+                try:
+                    res = search_memories(
+                        user_id=st.session_state.user_id,
+                        query=q,
+                        types=types or None,
+                        year_from=year_from,
+                        year_to=year_to,
+                        limit=int(limit),
+                    )
+                    st.session_state.mem_search_results = res
+                except Exception as e:
+                    st.warning(f"검색 오류: {e}")
+
+            results = st.session_state.get("mem_search_results", [])
+            if results:
+                st.caption(f"검색 결과: {len(results)}개")
+                sel_indices = []
+                for idx, r in enumerate(results[:200]):
+                    ts = r.get("timestamp") or ""
+                    rtype = r.get("type") or ""
+                    content = r.get("content") or ""
+                    with st.container(border=True):
+                        c1, c2 = st.columns([0.8, 0.2])
+                        with c1:
+                            st.markdown(f"**[{rtype}]** {content}")
+                            if ts:
+                                st.caption(ts)
+                        with c2:
+                            if st.checkbox("선택", key=f"mem_pick_{idx}"):
+                                sel_indices.append(idx)
+                if st.button("선택 항목 컨텍스트에 넣기", type="primary", use_container_width=True):
+                    picked = []
+                    for i in sel_indices:
+                        if 0 <= i < len(results):
+                            txt = (results[i].get("content") or "").strip()
+                            if txt:
+                                picked.append(txt)
+                    base = st.session_state.get("manual_injected_memories", [])
+                    st.session_state.manual_injected_memories = picked + base
+                    st.success(f"컨텍스트에 {len(picked)}개 항목을 추가했습니다.")
+                if st.button("선택 초기화", use_container_width=True):
+                    st.session_state.manual_injected_memories = []
+                    st.session_state.mem_search_results = []
+                    st.info("선택과 결과를 초기화했습니다.")
+
+        st.divider()
+        import importlib.util as _import_util
+        tiktoken_ok = _import_util.find_spec("tiktoken") is not None
+        chroma_ok = _import_util.find_spec("chromadb") is not None
+        st.subheader("🧩 환경 상태")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.caption("Vector Store")
+            st.markdown(f"- {'🟢' if chroma_ok else '🔴'} Chroma")
+            st.caption("Persist dir: data/vectors/")
+        with col_b:
+            st.caption("Tokenizer")
+            st.markdown(f"- {'🟢' if tiktoken_ok else '🔴'} tiktoken")
+
+        with st.expander("🧠 메모리 상태", expanded=False):
+            last_ret = st.session_state.get("last_retrieved_memories", [])
+            last_saved = st.session_state.get("last_saved_memory_ids", [])
+            st.caption(f"최근 검색된 메모리: {len(last_ret)}개")
+            for m in last_ret[:5]:
+                st.write(f"- {m}")
+            st.caption(f"최근 저장된 메모리: {len(last_saved)}개")
+            saved_items = st.session_state.get("last_saved_memories", [])
+            if saved_items:
+                st.caption("최근 저장 항목 미리보기:")
+                for it in saved_items[-5:]:
+                    try:
+                        if isinstance(it, dict):
+                            t = it.get("type") or ""
+                            if t == "lab_report":
+                                dates = it.get("dates") or []
+                                dates_txt = ", ".join([str(d) for d in dates]) if dates else "(날짜 없음)"
+                                st.write(f"- [LabReport] {dates_txt}")
+                            else:
+                                content = (it.get("content") or it.get("text") or "").strip()
+                                if content and len(content) > 120:
+                                    content = content[:120] + "…"
+                                if content:
+                                    st.write(f"- [{t or 'memo'}] {content}")
+                                else:
+                                    st.write(f"- [{t or 'memo'}]")
+                        else:
+                            st.write(f"- {str(it)[:120]}")
+                    except Exception:
+                        pass
+
+
+def render_chat_main() -> None:
+    """채팅 기록과 입력 UI를 렌더링하고, 전송 시 run_chat_turn을 호출하여 한 턴을 수행합니다."""
+    st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
+    for role, content in st.session_state.messages:
+        with st.chat_message(role):
+            st.markdown(content)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="input-section">', unsafe_allow_html=True)
+    prompt_text = "질문을 입력하세요"
+    if st.session_state.uploaded_images and len(st.session_state.uploaded_images) > 0:
+        prompt_text += f" (📎 {len(st.session_state.uploaded_images)}개 이미지 첨부됨)"
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    chat_input_key = f"chat_input_{len(st.session_state.uploaded_images)}"
+    if prompt := st.chat_input(prompt_text, key=chat_input_key):
+        user_message = prompt
+        if st.session_state.uploaded_images:
+            image_info = f" [📎 {len(st.session_state.uploaded_images)}개 이미지 첨부]"
+            user_message += image_info
+
+        saved_image_paths: list[str] = []
+        display_images = list(st.session_state.uploaded_images)
+        if st.session_state.uploaded_images:
+            profile_dir = os.path.abspath(os.path.join(UPLOAD_ROOT, st.session_state.user_id))
+            os.makedirs(profile_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            for idx, img in enumerate(st.session_state.uploaded_images):
+                try:
+                    data = img.getvalue()
+                    original_name = getattr(img, "name", f"upload_{idx}.png")
+                    safe_name = f"{timestamp}_{idx}_{original_name}"
+                    path = os.path.abspath(os.path.join(profile_dir, safe_name))
+                    with open(path, "wb") as f:
+                        f.write(data)
+                    saved_image_paths.append(path)
+                except Exception:
+                    continue
+            if saved_image_paths:
+                path_lines = "\n".join(f"- {p}" for p in saved_image_paths)
+                user_message += "\n\n[첨부 이미지 경로]\n" + path_lines
+            st.session_state.uploaded_images = []
+            st.session_state.previous_uploaded_count = 0
+
+        st.session_state.messages.append(("user", user_message))
+
+        with st.chat_message("user"):
+            st.markdown(user_message)
+            if display_images:
+                img_cols = st.columns(min(len(display_images), 3))
+                for i, img_file in enumerate(display_images):
+                    try:
+                        img_file.seek(0)
+                    except Exception:
+                        pass
+                    with img_cols[i % 3]:
+                        st.image(img_file, caption=img_file.name, width=120)
+
+        run_chat_turn(user_message=user_message, saved_image_paths=saved_image_paths)
+
+
+def render_layout() -> dict:
+    """사이드바를 먼저 렌더링하여 공용 플레이스홀더를 생성/반환합니다."""
+    render_sidebar()
+    return {"progress": progress_logs_area}
 
 
 @st.cache_resource
 def get_model_and_client():
     if not os.getenv("OPENAI_API_KEY"):
-        st.error("OPENAI_API_KEY가 설정되지 않았습니다. .env 또는 환경변수를 확인해주세요.")
+        st.error(
+            "OPENAI_API_KEY가 설정되지 않았습니다. .env 또는 환경변수를 확인해주세요."
+        )
         st.stop()
     # LangChain 모듈 임포트 시 버전 불일치가 잦으므로, 실패하면 버전 정보를 함께 안내한다.
     try:
         from langchain_openai import ChatOpenAI  # type: ignore
     except Exception as e:
         import importlib.metadata as _md
+
         def _ver(pkg: str) -> str:
             try:
                 return _md.version(pkg)
@@ -185,380 +609,41 @@ def get_model_and_client():
     return model, client
 
 
-def run_ocr_on_images(paths: list[str], client) -> list[tuple[str, str]]:
-    """[Deprecated] 더 이상 사용되지 않습니다. OCR은 extract_lab_report 내부에서 수행됩니다.
 
-    이 함수는 호환성을 위해 남겨졌으며 빈 결과를 반환합니다.
+def run_chat_turn(user_message: str, saved_image_paths: list[str]) -> None:
+    """스트리밍과 실시간 진행 로그 갱신을 포함하여 어시스턴트의 한 턴을 실행합니다.
+
+    기존 동작을 유지하면서 가독성을 위해 절차를 구조화했습니다.
     """
-    if not paths:
-        return []
-    return [(p, "") for p in paths]
-
-
-with st.sidebar:
-    st.title("🐱 Meow Chat")
-    st.subheader("👤 프로필 / 네임스페이스")
-    active = st.selectbox(
-        "활성 프로필",
-        options=st.session_state.profiles,
-        index=st.session_state.profiles.index(st.session_state.active_profile) if st.session_state.active_profile in st.session_state.profiles else 0,
-        key="profile_select",
-    )
-    with st.container():
-        new_prof = st.text_input("새 프로필 이름", key="new_profile_name")
-        if st.button("프로필 추가", use_container_width=True, key="btn_add_profile"):
-            name = (new_prof or "").strip()
-            if name and name not in st.session_state.profiles:
-                st.session_state.profiles.append(name)
-                st.session_state.active_profile = name
-                st.success(f"프로필 '{name}' 추가 및 활성화")
-            elif name in st.session_state.profiles:
-                st.info("이미 존재하는 프로필입니다.")
-            else:
-                st.warning("프로필 이름을 입력하세요.")
-    if active != st.session_state.active_profile:
-        st.session_state.active_profile = active
-
-    if st.session_state.active_profile != st.session_state._prev_active_profile:
-        st.session_state.user_id = st.session_state.active_profile
-        st.session_state.messages = []
-        st.session_state.summary_text = None
-        st.session_state.tool_history = []
-        st.session_state.last_retrieved_memories = []
-        st.session_state.last_saved_memory_ids = []
-        st.session_state.manual_injected_memories = []
-        st.session_state.mem_search_results = []
-        st.session_state.uploaded_images = []
-        st.session_state.previous_uploaded_count = 0
-        st.session_state._prev_active_profile = st.session_state.active_profile
-        st.info(f"프로필 전환: '{st.session_state.active_profile}' (대화 상태 초기화)")
-
-    st.divider()
-
-    st.subheader("📎 이미지 업로드")
-    uploaded_files = st.file_uploader(
-        "대화에 첨부할 이미지",
-        type=["png", "jpg", "jpeg", "gif", "webp"],
-        accept_multiple_files=True,
-        key=_uploader_key(),
-    )
-    if uploaded_files:
-        stored: list[io.BytesIO] = []
-        for file in uploaded_files:
-            data = file.getvalue()
-            buf = io.BytesIO(data)
-            buf.name = file.name  # type: ignore[attr-defined]
-            stored.append(buf)
-        st.session_state.uploaded_images = stored
-        st.session_state.previous_uploaded_count = len(stored)
-        # 별도 안내 메시지는 띄우지 않고 입력창 프롬프트에서 첨부 현황을 확인하도록 한다.
-    else:
-        if st.session_state.uploaded_images:
-            _clear_sidebar_uploader_state()
-
-    # 진행 로그(최근) - 고정 영역 스크롤 표시 (이미지 업로드 바로 아래)
-    st.subheader("🔎 진행 로그")
-    logs = st.session_state.get("last_progress_logs", [])
-    progress_logs_area = st.empty()
-    def _render_progress(_logs: list[str]):
-        text = "\n".join([str(x) for x in _logs[-200:]]) if _logs else ""
-        try:
-            progress_logs_area.text_area(
-                label="진행 로그",
-                value=text,
-                height=200,
-                key="ta_progress_logs",
-                label_visibility="collapsed",
-            )
-        except Exception:
-            progress_logs_area.text_area(
-                label="진행 로그",
-                value=text,
-                height=200,
-                key="ta_progress_logs_fallback",
-            )
-    _render_progress(logs)
-
-    # 수동 첨부 초기화 버튼 제거 (자동 초기화 및 분석 성공 시 초기화만 유지)
-
-    # 🤖 오케스트레이션: 진행 로그 바로 아래로 이동
-    st.divider()
-    st.subheader("🤖 오케스트레이션 (ReAct)")
-    TOOL_OPTIONS = [
-        # Memory
-        "memory_search", "memory_read", "memory_upsert",
-        # Weather
-        "get_weather", "get_forecast", "get_air_quality", "get_time_zone", "search_location",
-        # Math
-        "add", "subtract", "multiply", "divide", "convert_units", "calculate_percentage",
-        # Lab / Health (존재 시)
-        "extract_lab_report", "extract_lab_table", "analyze_cat_health",
-    ]
-    st.session_state.auto_allowed_tools = st.multiselect(
-        "허용 도구(화이트리스트)",
-        options=TOOL_OPTIONS,
-        default=[],
-        help="플래너/루프가 사용할 수 있는 도구만 허용합니다. 안전/비용 제어용",
-    )
-    st.session_state.react_max_iters = st.slider("ReAct 최대 반복", min_value=1, max_value=12, value=int(st.session_state.react_max_iters))
-
-    st.divider()
-
-    st.subheader("🧠 메모리 설정")
-    st.session_state.use_memory = st.checkbox("장기 메모리 사용", value=st.session_state.use_memory)
-    st.session_state.pinned_core_enabled = st.checkbox("핵심 사실 고정 슬롯 사용", value=st.session_state.pinned_core_enabled)
-    st.session_state.retrieval_top_k = st.slider("검색 Top-K", min_value=1, max_value=20, value=int(st.session_state.retrieval_top_k))
-    st.session_state.recent_turn_window = st.slider("최근 턴 창 크기", min_value=3, max_value=20, value=int(st.session_state.recent_turn_window))
-    st.session_state.summarize_trigger_turns = st.slider("요약 트리거 턴 수", min_value=5, max_value=40, value=int(st.session_state.summarize_trigger_turns))
-    st.session_state.memory_token_budget = st.slider("메모리 블록 최대 토큰", min_value=200, max_value=4000, value=int(st.session_state.memory_token_budget), step=50)
-    st.session_state.memory_item_token_cap = st.slider("항목당 토큰 상한", min_value=50, max_value=300, value=int(st.session_state.memory_item_token_cap), step=10)
-    st.session_state.pinned_token_budget = st.slider("핵심 사실 슬롯 토큰", min_value=100, max_value=1000, value=int(st.session_state.pinned_token_budget), step=50)
-    st.session_state.setdefault("pinned_compact_with_model", False)
-    st.session_state.setdefault("pinned_max_queries", 6)
-    st.session_state.pinned_compact_with_model = st.checkbox("핵심 사실 요약 압축(느릴 수 있음)", value=bool(st.session_state.pinned_compact_with_model))
-    st.session_state.pinned_max_queries = st.slider("핵심 사실 검색 강도(질의 수)", min_value=3, max_value=12, value=int(st.session_state.pinned_max_queries))
-
-    with st.expander("📌 핵심 사실 미리보기", expanded=False):
-        st.caption("owner_id / cat_id 범위를 기준으로 중요도 높은 프로필 항목을 요약해 보여줍니다.")
-        col_a, col_b = st.columns([0.5, 0.5])
-        with col_a:
-            if st.button("미리보기 갱신", use_container_width=True, key="btn_refresh_pinned_preview"):
-                try:
-                    model, _client = get_model_and_client()
-                    preview = build_pinned_core_facts_block(
-                        user_id=st.session_state.user_id,
-                        user_message="",
-                        summary_text=st.session_state.get("summary_text"),
-                        model=model,
-                        max_tokens=int(st.session_state.get("pinned_token_budget", 400)),
-                        per_item_cap=int(st.session_state.get("memory_item_token_cap", 150)),
-                        compact_with_model=bool(st.session_state.get("pinned_compact_with_model", False)),
-                        max_queries=int(st.session_state.get("pinned_max_queries", 6)),
-                        owner_id=(st.session_state.owner_id or None),
-                        cat_id=(st.session_state.cat_id or None),
-                        importance_min=0.8,
-                    )
-                    st.session_state.pinned_preview = preview or "(비어 있음)"
-                    st.success("핵심 사실 미리보기를 갱신했습니다.")
-                except Exception as e:
-                    st.warning(f"미리보기 실패: {e}")
-        with col_b:
-            if st.button("미리보기 초기화", use_container_width=True, key="btn_clear_pinned_preview"):
-                st.session_state.pinned_preview = None
-        if st.session_state.pinned_preview:
-            st.text_area("핵심 사실", value=st.session_state.pinned_preview, height=220, key="ta_pinned_preview")
-        else:
-            st.caption("미리보기가 없습니다. '미리보기 갱신'을 눌러 생성하세요.")
-
-    st.divider()
-    st.subheader("👥 개체 선택 (보호자/고양이)")
-    st.session_state.owner_id = st.text_input("보호자 ID (owner_id)", value=st.session_state.owner_id, placeholder="예: owner:aidan")
-    st.session_state.cat_id = st.text_input("고양이 ID (cat_id)", value=st.session_state.cat_id, placeholder="예: cat:momo")
-
-    # 진행 로그(최근) - 고정 영역 스크롤 표시
-
-
-    st.divider()
-    with st.expander("📜 타임라인 · 메모리 검색", expanded=False):
-        q = st.text_input("키워드", key="mem_search_query", placeholder="예: 예방접종, 알레르기, 사료")
-        col1, col2 = st.columns(2)
-        with col1:
-            yf = st.number_input("연도(시작)", value=0, min_value=0, max_value=9999, step=1)
-        with col2:
-            yt = st.number_input("연도(종료)", value=0, min_value=0, max_value=9999, step=1)
-        year_from = int(yf) if yf else None
-        year_to = int(yt) if yt else None
-        types = st.multiselect("유형 필터", options=MEMORY_TYPES, default=[])
-        limit = st.slider("최대 표시 수", min_value=10, max_value=200, value=50, step=10)
-        if st.button("검색", use_container_width=True):
-            try:
-                res = search_memories(
-                    user_id=st.session_state.user_id,
-                    query=q,
-                    types=types or None,
-                    year_from=year_from,
-                    year_to=year_to,
-                    limit=int(limit),
-                )
-                st.session_state.mem_search_results = res
-            except Exception as e:
-                st.warning(f"검색 오류: {e}")
-
-        results = st.session_state.get("mem_search_results", [])
-        if results:
-            st.caption(f"검색 결과: {len(results)}개")
-            sel_indices = []
-            for idx, r in enumerate(results[:200]):
-                ts = r.get("timestamp") or ""
-                rtype = r.get("type") or ""
-                content = r.get("content") or ""
-                with st.container(border=True):
-                    c1, c2 = st.columns([0.8, 0.2])
-                    with c1:
-                        st.markdown(f"**[{rtype}]** {content}")
-                        if ts:
-                            st.caption(ts)
-                    with c2:
-                        if st.checkbox("선택", key=f"mem_pick_{idx}"):
-                            sel_indices.append(idx)
-            if st.button("선택 항목 컨텍스트에 넣기", type="primary", use_container_width=True):
-                picked = []
-                for i in sel_indices:
-                    if 0 <= i < len(results):
-                        txt = (results[i].get("content") or "").strip()
-                        if txt:
-                            picked.append(txt)
-                base = st.session_state.get("manual_injected_memories", [])
-                st.session_state.manual_injected_memories = picked + base
-                st.success(f"컨텍스트에 {len(picked)}개 항목을 추가했습니다.")
-            if st.button("선택 초기화", use_container_width=True):
-                st.session_state.manual_injected_memories = []
-                st.session_state.mem_search_results = []
-                st.info("선택과 결과를 초기화했습니다.")
-
-    # 맨 아래: 환경 상태 + 메모리 상태
-    st.divider()
-    # 환경/백엔드 배지
-    import importlib.util as _import_util
-    tiktoken_ok = _import_util.find_spec("tiktoken") is not None
-    chroma_ok = _import_util.find_spec("chromadb") is not None
-    st.subheader("🧩 환경 상태")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.caption("Vector Store")
-        st.markdown(f"- {'🟢' if chroma_ok else '🔴'} Chroma")
-        st.caption("Persist dir: data/vectors/")
-    with col_b:
-        st.caption("Tokenizer")
-        st.markdown(f"- {'🟢' if tiktoken_ok else '🔴'} tiktoken")
-
-    with st.expander("🧠 메모리 상태", expanded=False):
-        last_ret = st.session_state.get("last_retrieved_memories", [])
-        last_saved = st.session_state.get("last_saved_memory_ids", [])
-        st.caption(f"최근 검색된 메모리: {len(last_ret)}개")
-        for m in last_ret[:5]:
-            st.write(f"- {m}")
-        st.caption(f"최근 저장된 메모리: {len(last_saved)}개")
-        # 최근 저장된 메모리 상세 표시 (검사결과는 날짜만 간단히 표시)
-        saved_items = st.session_state.get("last_saved_memories", [])
-        if saved_items:
-            st.caption("최근 저장 항목 미리보기:")
-            for it in saved_items[-5:]:  # 최근 5개
-                try:
-                    if isinstance(it, dict):
-                        t = it.get("type") or ""
-                        if t == "lab_report":
-                            dates = it.get("dates") or []
-                            dates_txt = ", ".join([str(d) for d in dates]) if dates else "(날짜 없음)"
-                            st.write(f"- [LabReport] {dates_txt}")
-                        else:
-                            content = (it.get("content") or it.get("text") or "").strip()
-                            if content and len(content) > 120:
-                                content = content[:120] + "…"
-                            if content:
-                                st.write(f"- [{t or 'memo'}] {content}")
-                            else:
-                                st.write(f"- [{t or 'memo'}]")
-                    else:
-                        st.write(f"- {str(it)[:120]}")
-                except Exception:
-                    pass
-
-
-# 대화 메시지 영역 렌더링
-st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
-for role, content in st.session_state.messages:
-    with st.chat_message(role):
-        st.markdown(content)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# 사용자 입력 영역
-st.markdown('<div class="input-section">', unsafe_allow_html=True)
-
-prompt_text = "질문을 입력하세요"
-if st.session_state.uploaded_images and len(st.session_state.uploaded_images) > 0:
-    prompt_text += f" (📎 {len(st.session_state.uploaded_images)}개 이미지 첨부됨)"
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-chat_input_key = f"chat_input_{len(st.session_state.uploaded_images)}"
-if prompt := st.chat_input(prompt_text, key=chat_input_key):
-    user_message = prompt
-    if st.session_state.uploaded_images:
-        image_info = f" [📎 {len(st.session_state.uploaded_images)}개 이미지 첨부]"
-        user_message += image_info
-
-    saved_image_paths: list[str] = []
-    display_images = list(st.session_state.uploaded_images)
-    if st.session_state.uploaded_images:
-        profile_dir = os.path.abspath(os.path.join(UPLOAD_ROOT, st.session_state.user_id))
-        os.makedirs(profile_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for idx, img in enumerate(st.session_state.uploaded_images):
-            try:
-                data = img.getvalue()
-                original_name = getattr(img, "name", f"upload_{idx}.png")
-                safe_name = f"{timestamp}_{idx}_{original_name}"
-                path = os.path.abspath(os.path.join(profile_dir, safe_name))
-                with open(path, "wb") as f:
-                    f.write(data)
-                saved_image_paths.append(path)
-            except Exception:
-                continue
-        if saved_image_paths:
-            path_lines = "\n".join(f"- {p}" for p in saved_image_paths)
-            user_message += "\n\n[첨부 이미지 경로]\n" + path_lines
-        st.session_state.uploaded_images = []
-        st.session_state.previous_uploaded_count = 0
-
-    st.session_state.messages.append(("user", user_message))
-
-    with st.chat_message("user"):
-        st.markdown(user_message)
-        if display_images:
-            img_cols = st.columns(min(len(display_images), 3))
-            for i, img_file in enumerate(display_images):
-                try:
-                    img_file.seek(0)
-                except Exception:
-                    pass
-                with img_cols[i % 3]:
-                    st.image(img_file, caption=img_file.name, width=120)
-
+    global progress_logs_area
     with st.chat_message("assistant"):
         try:
             model, client = get_model_and_client()
 
-            # 핵심 사실 슬롯 자동 집계(옵션)
+            # 핵심 사실 블록 구성(선택 사항)
             pinned_block: str | None = None
             try:
-                if bool(st.session_state.get("pinned_core_enabled", True)):
-                    pinned_block = build_pinned_core_facts_block(
-                        user_id=st.session_state.user_id,
-                        user_message=user_message,
-                        summary_text=None,
-                        model=model,
-                        max_tokens=int(st.session_state.get("pinned_token_budget", 400)),
-                        per_item_cap=int(st.session_state.get("memory_item_token_cap", 150)),
-                        compact_with_model=bool(st.session_state.get("pinned_compact_with_model", False)),
-                        max_queries=int(st.session_state.get("pinned_max_queries", 6)),
-                        owner_id=(st.session_state.owner_id or None),
-                        cat_id=(st.session_state.cat_id or None),
-                        importance_min=0.8,
-                    )
+                pinned_block = build_pinned_core_facts_block(
+                    user_id=st.session_state.user_id,
+                    user_message=user_message,
+                    summary_text=None,
+                    model=model,
+                    max_tokens=int(
+                        st.session_state.get("pinned_token_budget", 400)
+                    ),
+                    per_item_cap=int(
+                        st.session_state.get("memory_item_token_cap", 150)
+                    ),
+                    max_queries=int(st.session_state.get("pinned_max_queries", 6)),
+                    importance_min=0.8,
+                )
             except Exception:
                 pinned_block = None
 
-            # 항상 ReAct 스트리밍 오케스트레이션
-            # 스트리밍 방식으로 ReAct 실행
-            allowed_tools = st.session_state.auto_allowed_tools or None
+            # ReAct 스트리밍 오케스트레이션 준비
             extra_vars = {
-                "owner_id": st.session_state.owner_id or "",
-                "cat_id": st.session_state.cat_id or "",
                 "user_id": st.session_state.user_id or os.getenv("USER", "default"),
             }
-            # 첨부 이미지가 저장되어 있으면 경로 배열을 vars로 명시 전달
             try:
                 if saved_image_paths:
                     extra_vars["image_paths"] = list(saved_image_paths)
@@ -567,18 +652,25 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
             if pinned_block:
                 extra_vars["pinned_core_facts"] = pinned_block
 
-            rec = {"tokens": [], "used_tools": set(), "tool_details": [], "final_text": None}
+            rec: dict = {
+                "tokens": [],
+                "used_tools": set(),
+                "tool_details": [],
+                "final_text": None,
+            }
             text_stream = stream_react_rag_generator(
                 user_request=user_message,
                 rec=rec,
                 model=model,
                 client=client,
-                allowed_tools=allowed_tools,
                 max_iters=int(st.session_state.react_max_iters),
                 extra_vars=extra_vars,
             )
-            # 첫 토큰이 나타날 때까지는 동그라미 스피너만 보여주고,
-            # 첫 토큰 이후에는 기존처럼 채팅 영역에 바로 스트리밍되도록 처리
+
+            # 새 턴(사용자→어시스턴트) 구분선 추가
+            append_turn_divider(progress_logs_area)
+
+            # 스피너 하에서 첫 청크를 미리 수신
             first_chunk = None
             with st.spinner("생각 중…"):
                 try:
@@ -586,38 +678,67 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
                 except StopIteration:
                     first_chunk = None
 
+            # 첫 청크 직후 한 번 로그 병합/렌더링(이미 계획/실행 로그가 존재할 수 있음)
+            try:
+                merge_ring_into_session(rec)
+                render_progress_html(
+                    progress_logs_area,
+                    "\n".join(
+                        st.session_state.get("orch_logs_accum", [])[-LOG_MAX_LINES:]
+                    ),
+                )
+            except Exception:
+                pass
+
             def _chain_first(gen, first):
                 if first is not None:
                     yield first
                 for chunk in gen:
                     yield chunk
 
-            # 스트림을 소비하면서 사이드바 진행 로그를 실시간 갱신
-            def _wrap_with_progress(gen):
-                for chunk in gen:
-                    # 진행 로그가 쌓였으면 사이드바 갱신
+            def _wrap_with_orch_logs(gen):
+                prev_len = -1
+                while True:
                     try:
-                        if rec.get("progress_logs"):
-                            st.session_state["last_progress_logs"] = list(rec.get("progress_logs") or [])[-200:]
-                            # 렌더 함수가 존재하면 갱신
-                            if 'progress_logs_area' in globals() and progress_logs_area is not None:
-                                logs_now = st.session_state.get("last_progress_logs", [])
-                                # 텍스트 영역 재렌더
-                                try:
-                                    progress_logs_area.text_area(
-                                        label="진행 로그",
-                                        value="\n".join([str(x) for x in logs_now[-200:]]),
-                                        height=200,
-                                        key="ta_progress_logs",
-                                        label_visibility="collapsed",
-                                    )
-                                except Exception:
-                                    pass
+                        chunk = next(gen)
+                    except StopIteration:
+                        # 마지막 병합 및 렌더링
+                        try:
+                            merge_ring_into_session(rec)
+                            render_progress_html(
+                                progress_logs_area,
+                                "\n".join(
+                                    st.session_state.get("orch_logs_accum", [])[
+                                        -LOG_MAX_LINES:
+                                    ]
+                                ),
+                            )
+                        except Exception:
+                            pass
+                        break
+                    try:
+                        ring = rec.get("orchestrator_logs")
+                        if ring is not None:
+                            curr_len = len(ring)
+                            if curr_len != prev_len:
+                                prev_len = curr_len
+                                merge_ring_into_session(rec)
+                                render_progress_html(
+                                    progress_logs_area,
+                                    "\n".join(
+                                        st.session_state.get("orch_logs_accum", [])[
+                                            -LOG_MAX_LINES:
+                                        ]
+                                    ),
+                                )
                     except Exception:
                         pass
                     yield chunk
 
-            final_text = st.write_stream(_wrap_with_progress(_chain_first(text_stream, first_chunk)))
+            # 사이드바 로그를 갱신하면서 채팅으로 텍스트 스트리밍
+            final_text = st.write_stream(
+                _wrap_with_orch_logs(_chain_first(text_stream, first_chunk))
+            )
 
             now = datetime.now().strftime("%H:%M:%S")
             for d in rec.get("tool_details", []):
@@ -625,15 +746,32 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
             used_tools = list(rec.get("used_tools") or [])
             if used_tools:
                 st.info(f"🛠️ 사용된 도구: {', '.join(str(x) for x in used_tools)}")
-            # 진행 로그를 사이드바 표시용 세션 상태에 저장
+
+            final_str = (
+                final_text
+                if isinstance(final_text, str)
+                else (rec.get("final_text") or "")
+            )
+            # 대화 기반 핵심/사실 자동 저장(항상 활성화)
             try:
-                if rec.get("progress_logs"):
-                    st.session_state["last_progress_logs"] = list(rec.get("progress_logs") or [])[-200:]
+                recent_turns = list(st.session_state.messages)[-2 * int(st.session_state.get("recent_turn_window", 10)) :]
+                cands = extract_candidates(recent_turns=recent_turns, assistant_reply=final_str, model=model)
+                if cands:
+                    user_id = st.session_state.user_id or os.getenv("USER", "default")
+                    ids = write_memories(user_id=user_id, memories=cands)
+                    if ids:
+                        st.session_state.last_saved_memory_ids = (st.session_state.get("last_saved_memory_ids", []) + ids)[-50:]
+                        saved_items_preview = []
+                        for m in cands:
+                            try:
+                                saved_items_preview.append({"type": m.get("type"), "content": m.get("content")})
+                            except Exception:
+                                continue
+                        cur = list(st.session_state.get("last_saved_memories", []))
+                        cur.extend(saved_items_preview)
+                        st.session_state.last_saved_memories = cur[-50:]
             except Exception:
                 pass
-
-            final_str = final_text if isinstance(final_text, str) else (rec.get("final_text") or "")
-            # 최근 저장된 메모리 목록에 반영 (먼저 처리)
             try:
                 if rec.get("saved_memories"):
                     cur = list(st.session_state.get("last_saved_memories", []))
@@ -641,29 +779,35 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
                     st.session_state.last_saved_memories = cur[-50:]
             except Exception:
                 pass
-            # 답변을 세션 메시지에 먼저 반영
             st.session_state.messages.append(("assistant", final_str))
-            # 디버그: 저장 플래그 상태 출력
             try:
-                print("[DEBUG] rec.lab_report_saved=", rec.get("lab_report_saved"), "| saved_memories_len=", len(rec.get("saved_memories") or []))
+                print(
+                    "[DEBUG] rec.lab_report_saved=",
+                    rec.get("lab_report_saved"),
+                    "| saved_memories_len=",
+                    len(rec.get("saved_memories") or []),
+                )
             except Exception:
                 pass
-            # 검사결과 저장 성공 시: 업로더 완전 초기화 + 즉시 리렌더
             if rec.get("lab_report_saved"):
                 try:
-                    print("[DEBUG] Entering lab_report_saved clear path. _uploader_nonce(before)=", st.session_state.get("_uploader_nonce"))
+                    print(
+                        "[DEBUG] Entering lab_report_saved clear path. _uploader_nonce(before)=",
+                        st.session_state.get("_uploader_nonce"),
+                    )
                 except Exception:
                     pass
                 _clear_sidebar_uploader_state()
                 st.info("검사결과 저장 완료. 첨부 이미지 목록을 초기화했습니다.")
                 st.rerun()
             st.stop()
-
-            # 이하 레거시 파이프라인 코드는 st.stop() 이후로 도달하지 않으므로 제거되었습니다.
-
         except Exception as e:
             err = f"오류가 발생했습니다: {e}"
             st.markdown(err)
             st.session_state.messages.append(("assistant", err))
+
+
+ph = render_layout()
+render_chat_main()
 
 # 앱 로직 종료

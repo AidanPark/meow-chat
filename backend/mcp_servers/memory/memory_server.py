@@ -31,7 +31,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 import uvicorn
 
-# Bootstrap sys.path so that `mcp_servers` package can be imported when running from subfolders
+# 하위 폴더에서 실행할 때도 `mcp_servers` 패키지를 임포트할 수 있도록 sys.path 보정
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)

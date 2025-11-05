@@ -61,7 +61,7 @@ kill_processes_by_port() {
 # PID 파일에서 프로세스 ID 읽기
 if [ -f /tmp/math_server.pid ]; then
     MATH_PID=$(cat /tmp/math_server.pid)
-    kill $MATH_PID 2>/dev/null && echo "✅ Math & Utility Server 종료됨 (PID: $MATH_PID)" || echo "⚠️ Math Server 종료 실패"
+    kill $MATH_PID 2>/dev/null && echo "✅ Math Server 종료됨 (PID: $MATH_PID)" || echo "⚠️ Math Server 종료 실패"
     rm /tmp/math_server.pid
 fi
 
@@ -101,7 +101,7 @@ pkill -f "memory_server.py" 2>/dev/null
 sleep 2
 
 # 포트 점유 프로세스도 정리
-kill_processes_by_port "$MATH_PORT" "Math & Utility"
+kill_processes_by_port "$MATH_PORT" "Math"
 kill_processes_by_port "$WEATHER_PORT" "Weather & API"
 kill_processes_by_port "$HEALTH_PORT" "Cat Health"
 kill_processes_by_port "$LAB_PORT" "Lab Report OCR"
@@ -109,7 +109,7 @@ kill_processes_by_port "$MEM_PORT" "Memory"
 
 # 포트 사용 확인
 echo "📊 포트 사용 상태 확인:"
-echo "   🧮 Math & Utility: http://${MATH_HOST}:${MATH_PORT}"
+echo "   🧮 Math:             http://${MATH_HOST}:${MATH_PORT}"
 echo "   🌤️ Weather & API:   http://${WEATHER_HOST}:${WEATHER_PORT}"
 echo "   🐱 Cat Health:      http://${HEALTH_HOST}:${HEALTH_PORT}"
 echo "   🗂️ Lab Report OCR:  http://${LAB_HOST}:${LAB_PORT}"

@@ -6,7 +6,7 @@ MessageTuple = Tuple[str, str]  # (role, content)
 
 
 def _last_n_turns(messages: List[MessageTuple], n_turns: int) -> List[MessageTuple]:
-    # A turn is typically (user, assistant). We keep last 2*n items.
+    # 한 턴은 일반적으로 (user, assistant) 쌍입니다. 마지막 2*n 개 항목을 유지합니다.
     keep = max(0, 2 * n_turns)
     return messages[-keep:] if keep else []
 
@@ -58,7 +58,7 @@ def build_context_messages(
 
     recent = _last_n_turns(history_messages, recent_turn_window)
     for role, content in recent:
-        # ensure only user/assistant roles are forwarded
+        # user/assistant 역할만 전달하도록 보장
         if role in ("user", "assistant"):
             lc_messages.append({"role": role, "content": content})
 

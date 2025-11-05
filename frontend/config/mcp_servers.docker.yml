@@ -1,0 +1,16 @@
+servers:
+  math_utility:
+    url: http://backend-mcp:8000/sse
+    transport: sse
+  weather_api:
+    url: http://backend-mcp:8001/sse
+    transport: sse
+  cat_health:
+    url: http://backend-mcp:8002/sse
+    transport: sse
+  extract_lab_report:
+    url: http://backend-mcp:8004/sse
+    transport: sse
+  memory:
+    url: http://backend-mcp:8005/sse
+    transport: sse

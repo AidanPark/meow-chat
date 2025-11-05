@@ -3,30 +3,39 @@
 
 ## 🚀 Quick Start
 
-### 환경 설정 및 실행
+### 권장: Docker로 통합 실행(플랫폼 독립)
+
+Docker를 기본 개발/실행 환경으로 사용합니다(로컬 Conda는 선택사항). Linux/Windows/macOS(특히 Apple Silicon) 모두 동일한 방법으로 구동됩니다.
 
 ```bash
-# 1. Conda 환경 활성화
-conda activate meow-chat
+# 표준(Runtime: pip 기반 Dockerfile)
+docker compose up --build -d
 
-# 2. Jupyter Lab 시작 (GLIBCXX 문제 해결 포함)
-bash backend/start_jupyter.sh
+# (Apple Silicon 등) OCR 호환성이 더 좋은 Conda 기반 런타임으로 빌드
+docker compose -f docker-compose.yml -f docker-compose.conda.yml up --build -d
 
-# 3. 또는 직접 환경변수 설정 후 실행
-export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
-jupyter lab
+# 로그 보기
+docker compose logs -f backend-mcp
 
----
+# 종료
+docker compose down
+```
+
+컨테이너 내부에서 OCR 확인:
+
+```bash
+docker exec -it meowchat-backend-mcp bash -lc "paddleocr --version || python -c 'import paddleocr; print(\"paddleocr import OK\")'"
+```
+
+프론트엔드 접속: http://localhost:8501
 
 ### 프론트엔드 채팅 (ReAct 전용)
 
 - Streamlit 프론트엔드는 현재 ReAct 전용 모드로 동작하며, 응답을 토큰 단위로 스트리밍합니다.
-- 선택사항이지만 권장: 로컬 MCP 서버를 다음으로 시작하세요: `bash backend/mcp_servers/start_servers.sh` (source 하지 말고 bash로 실행).
-- 앱 실행(레포 루트): `streamlit run frontend/app.py`
+- 로컬에서 실행할 경우: `streamlit run frontend/app.py` (백엔드는 Docker 컨테이너에서 실행 중)
 - 스트리밍 오류 및 중첩된 예외(ExceptionGroup) 상세는 `frontend/logs/streaming.log`에 기록됩니다.
 - MCP 엔드포인트는 `frontend/config/mcp_servers.yml`에서 설정할 수 있습니다. 자세한 내용은 `docs/REACT_MODE.md`를 참고하세요.
 
----
 
 ## 🧱 레포 구조 변경 안내 (backend 폴더 도입)
 

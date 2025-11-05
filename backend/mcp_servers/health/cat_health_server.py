@@ -13,7 +13,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 import uvicorn
 
-# Bootstrap sys.path so that `mcp_servers` package can be imported when running from subfolders
+# 하위 폴더에서 실행할 때도 `mcp_servers` 패키지를 임포트할 수 있도록 sys.path 보정
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
@@ -55,7 +55,7 @@ REFERENCE_RANGES = {
 
 @mcp.tool()
 async def analyze_blood_values(lab_values: Dict[str, float], cat_age: int, cat_weight: float) -> Dict[str, Any]:
-    """Analyze cat blood test results and provide comprehensive health insights"""
+    """고양이 혈액 검사 결과를 분석하고 종합적인 건강 인사이트를 제공합니다."""
     logger.info(f"🩺 BLOOD_ANALYSIS 도구 호출: 나이 {cat_age}세, 체중 {cat_weight}kg")
 
     age_group = "senior" if cat_age >= 7 else "adult"
@@ -116,7 +116,7 @@ async def analyze_blood_values(lab_values: Dict[str, float], cat_age: int, cat_w
 
 @mcp.tool()
 async def normalize_lab_units(raw_values: Dict[str, Any]) -> Dict[str, float]:
-    """Normalize different unit systems to standard laboratory values"""
+    """다양한 단위 체계를 표준 검사 단위로 정규화합니다."""
     logger.info(f"⚖️ UNIT_NORMALIZE 도구 호출: {len(raw_values)}개 항목")
 
     normalized: Dict[str, float] = {}
@@ -155,7 +155,7 @@ async def normalize_lab_units(raw_values: Dict[str, Any]) -> Dict[str, float]:
 
 @mcp.tool()
 async def get_reference_ranges(test_type: str, cat_age: int) -> Dict[str, Any]:
-    """Get normal reference ranges for specific cat lab values based on age"""
+    """나이에 따른 특정 검사 항목의 정상 기준 범위를 반환합니다."""
     logger.info(f"📊 REFERENCE 도구 호출: {test_type}, 나이 {cat_age}세")
 
     age_group = "senior" if cat_age >= 7 else "adult"
@@ -172,7 +172,7 @@ async def get_reference_ranges(test_type: str, cat_age: int) -> Dict[str, Any]:
 
 @mcp.tool()
 async def assess_kidney_function(creatinine: float, bun: float, cat_age: int) -> Dict[str, Any]:
-    """Specific assessment for kidney function based on creatinine and BUN levels"""
+    """크레아티닌과 BUN 수치를 바탕으로 신장 기능을 평가합니다."""
     logger.info(f"🫘 KIDNEY 도구 호출: 크레아티닌 {creatinine}, BUN {bun}, 나이 {cat_age}세")
 
     assessment: Dict[str, Any] = {
@@ -215,7 +215,7 @@ async def assess_kidney_function(creatinine: float, bun: float, cat_age: int) ->
 
 @mcp.tool()
 async def generate_health_report(cat_info: Dict[str, Any], lab_results: Dict[str, float]) -> str:
-    """Generate a comprehensive health report for the cat"""
+    """고양이에 대한 종합 건강 리포트를 생성합니다."""
     logger.info(f"📋 REPORT 도구 호출: {cat_info.get('name', '고양이')}의 건강 리포트")
 
     name = cat_info.get('name', '고양이')

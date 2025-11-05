@@ -3,8 +3,8 @@
 포트 3-4개만 사용하여 모든 기능 제공
 """
 
-# 1. 건강 분석 서버 (포트 8001)
-# health_analysis_server.py
+# 1. 건강 분석 서버 (포트 8002)
+# cat_health_server.py
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("CatHealthAnalysis")

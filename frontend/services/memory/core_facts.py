@@ -44,7 +44,6 @@ def build_pinned_core_facts_block(
     max_tokens: int = 400,
     per_item_cap: int = 160,
     *,
-    compact_with_model: bool = False,
     max_queries: int = 6,
     owner_id: Optional[str] = None,
     cat_id: Optional[str] = None,
@@ -53,8 +52,7 @@ def build_pinned_core_facts_block(
     """핵심 사실 블록을 생성합니다.
     1) 다중 키워드로 검색하여 관련 메모리를 수집
     2) 간단 정제/중복 제거
-    3) 필요 시 LLM으로 1차 요약(실패 시 목록 사용)
-    4) 토큰 예산 내로 트리밍
+    3) 토큰 예산 내로 트리밍
     """
     # 1) 검색 수집
     # 질의 수를 제한하여 검색 비용을 제어
@@ -63,7 +61,8 @@ def build_pinned_core_facts_block(
     for q in queries:
         try:
             # 요약 텍스트를 포함하여 질의 재작성 품질 향상 + 메타 필터로 범위 축소
-            filters: Dict[str, Any] = {"type": "profile"}
+            # 프로필만으로 제한하던 필터를 완화하여, 핵심 키워드가 포함된 다양한 유형을 포괄합니다.
+            filters: Dict[str, Any] = {}
             if owner_id:
                 filters["owner_id"] = owner_id
             if cat_id:
@@ -83,31 +82,8 @@ def build_pinned_core_facts_block(
     #    필요 시 store.retrieve에서 importance를 메타에 포함시켜 반환하도록 확장 가능합니다.
     candidates = _dedup_keep_order(candidates)
 
-    # 3) 선택적 1차 요약(너무 길 때만, 요청된 경우만)
+    # 3) 토큰 예산 트리밍(문자 기반 근사/슬라이더 값 사용)
     joined = "\n".join(f"- {c}" for c in candidates[:20])
     block = joined
-    if compact_with_model and len(candidates) > 8:
-        try:
-            prompt = [
-                {
-                    "role": "system",
-                    "content": (
-                        "당신은 수의 도메인 핵심 사실 정리자입니다. 알레르기/만성질환/금기/복용약/식단/프로필과 같은 안전상 중요한 항목만 간결한 불릿으로 요약하세요. 중복은 합치고, 필요한 수치/단위를 보존하세요."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"다음 항목을 6~12줄 내로 핵심만 정리:\n{joined}",
-                },
-            ]
-            resp = model.invoke(prompt)
-            summarized = getattr(resp, "content", None) or str(resp)
-            if summarized:
-                block = summarized
-        except Exception:
-            # 요약 실패 시 joined 사용
-            pass
-
-    # 4) 토큰 예산 트리밍(문자 기반 근사/슬라이더 값 사용)
     trimmed_list = trim_memory_block([block], max_tokens=max_tokens, per_item_token_cap=per_item_cap)
     return trimmed_list[0] if trimmed_list else None

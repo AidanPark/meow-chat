@@ -47,27 +47,18 @@ Stop:
 docker compose down
 ```
 
-### Enable OCR extras (OpenCV/PaddleOCR)
+### OCR (OpenCV/PaddleOCR)
 
-By default, the image builds without heavy OCR dependencies. To include them:
+OCR is now included by default in the base runtime. The backend image installs required system libraries (libgl1, libglib2.0-0, libxext6, libsm6, libxrender1, libgomp1) and Python dependencies from `backend/requirements.txt` (opencv-python-headless, paddleocr, paddlepaddle for Linux x86_64).
 
-1) Using compose build arg:
+Quick check after build/run:
 
 ```bash
-INSTALL_OCR_EXTRAS=true docker compose build backend-mcp
-docker compose up -d
+docker compose up --build -d
+docker exec -it meowchat-backend-mcp bash -lc "paddleocr --version || python -c 'import paddleocr; print(\"paddleocr import OK\")'"
 ```
 
-2) Or edit `docker-compose.yml` and set:
-
-```yaml
-args:
-	INSTALL_OCR_EXTRAS: "true"
-```
-
-This installs system libraries (libxext6, libsm6, libxrender1, libgomp1) and pip dependencies from `backend/requirements-ocr.txt` (opencv-python-headless, paddleocr, paddlepaddle for Linux x86_64).
-
-If your platform lacks compatible wheels (e.g., Apple Silicon), prefer the Conda-based image below.
+If your platform lacks compatible wheels (e.g., Apple Silicon), use the Conda-based image below.
 
 ### Conda-based image
 

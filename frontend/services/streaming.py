@@ -5,6 +5,7 @@ from threading import Thread, Event, current_thread
 from queue import Queue, Empty
 import time
 from typing import Dict, Any, Generator, List, Set
+from collections import deque, deque as _deque_type
 import logging
 import traceback
 import os
@@ -28,19 +29,19 @@ from services.orchestrator import (
 
 
 # ------------------------------------------------------------
-# Logging setup (console + file) for streaming exceptions
+# 스트리밍 예외 로깅 설정(콘솔 + 파일)
 # ------------------------------------------------------------
 _LOGGER = logging.getLogger("meow.frontend.streaming")
 if not _LOGGER.handlers:
     _LOGGER.setLevel(logging.INFO)
-    # Console handler
+    # 콘솔 핸들러
     _ch = logging.StreamHandler()
     _ch.setLevel(logging.INFO)
     _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     _ch.setFormatter(_fmt)
     _LOGGER.addHandler(_ch)
 
-    # File handler under frontend/logs/
+    # 파일 핸들러: frontend/logs/
     try:
         _BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # frontend/
         _LOG_DIR = os.path.join(_BASE_DIR, "logs")
@@ -50,16 +51,16 @@ if not _LOGGER.handlers:
         _fh.setFormatter(_fmt)
         _LOGGER.addHandler(_fh)
     except Exception:
-        # If file handler fails (permissions, etc.), continue with console-only
+        # 파일 핸들러 실패 시(권한 등) 콘솔 로깅만 사용
         pass
 
 
 def _format_exception_recursive(exc: BaseException) -> str:
-    """Format an exception, expanding ExceptionGroup recursively to capture sub-exceptions."""
+    """예외를 포맷합니다. ExceptionGroup를 재귀적으로 펼쳐 하위 예외까지 캡처합니다."""
     lines: List[str] = []
     try:
         lines.append("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
-        # Python 3.11 ExceptionGroup compatibility
+    # Python 3.11 ExceptionGroup 호환 처리
         subs = getattr(exc, "exceptions", None)
         if isinstance(subs, (list, tuple)) and subs:
             for idx, sub in enumerate(subs):
@@ -115,7 +116,7 @@ def stream_agent_generator(
     model,
     client,
 ) -> Generator[str, None, None]:
-    """LangGraph 에이전트를 비동기 실행하고 토큰을 스트리밍으로 내보낸다."""
+    """LangGraph 에이전트를 비동기로 실행하고 토큰을 스트리밍으로 방출합니다."""
     token_queue: Queue[str] = Queue()
     done = Event()
 
@@ -148,13 +149,23 @@ def stream_agent_generator(
     thread.start()
 
     aggregated: List[str] = []
+    last_heartbeat = time.time()
     while not (done.is_set() and token_queue.empty()):
         try:
             token = token_queue.get(timeout=0.05)
-            aggregated.append(token)
-            yield token
+            if token:
+                aggregated.append(token)
+                yield token
+            else:
+                # 빈 토큰(하트비트 등)은 렌더 트리거로만 사용하고 누적하지 않음
+                yield ""
         except Empty:
-            time.sleep(0.01)
+            # 주기적 하트비트로 UI 갱신 트리거
+            if not done.is_set() and (time.time() - last_heartbeat) >= 0.2:
+                last_heartbeat = time.time()
+                yield ""
+            else:
+                time.sleep(0.01)
 
     if not aggregated:
         final_text = rec.get("final_text")
@@ -180,15 +191,36 @@ def stream_react_rag_generator(
     token_queue: Queue[str] = Queue()
     done = Event()
 
-    def _qput(txt: str):
-        try:
-            if txt:
-                token_queue.put(txt)
-        except Exception:
-            pass
+    # 오케스트레이터 메모리 내 로그 버퍼(최대 1000줄)
+    orch_ring: _deque_type[str] = deque(maxlen=1000)
+    # 호출 측에서 사이드바 UI 갱신 시 사용하도록 노출
+    try:
+        rec["orchestrator_logs"] = orch_ring
+    except Exception:
+        pass
+
+    class InMemoryBufferHandler(logging.Handler):
+        def __init__(self, ring: _deque_type[str]):
+            super().__init__(level=logging.INFO)
+            self.ring = ring
+            fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+            self.setFormatter(fmt)
+
+        def emit(self, record: logging.LogRecord) -> None:  # type: ignore[override]
+            try:
+                msg = self.format(record)
+                self.ring.append(msg)
+            except Exception:
+                # 로깅 실패는 무시
+                pass
 
     async def _run_async():
         try:
+            # 이번 실행에 한해 오케스트레이터 로거에 메모리 핸들러 부착
+            _logger = logging.getLogger("meow.frontend.orchestrator")
+            _handler = InMemoryBufferHandler(orch_ring)
+            _handler.setLevel(logging.INFO)
+            _logger.addHandler(_handler)
             # 초기 상태 구성
             from typing import cast
             state: OrchestratorState = cast(OrchestratorState, {
@@ -205,24 +237,21 @@ def stream_react_rag_generator(
             })
 
             # 루프 실행: 계획 → 실행 → 자가평가
-            show_progress = bool((extra_vars or {}).get("_show_react_progress", False))
-            rec.setdefault("progress_logs", [])
+            # 진행 로그 내부 수집은 제거되었고, UI는 사이드바로만 표시합니다.
+            def _preview_args(a: Any, maxlen: int = 180) -> str:
+                try:
+                    import json as __json
+                    s = __json.dumps(a, ensure_ascii=False)
+                except Exception:
+                    s = str(a)
+                return (s if len(s) <= maxlen else (s[:maxlen] + "…"))
+
             for _ in range(int(max_iters)):
                 state = await react_plan_node(state, model, client)
                 finish_hint = state.get("react_finish")
                 plan = state.get("plan") or {}
                 steps = plan.get("steps") or []
-                if steps:
-                    step = steps[0]
-                    tool = step.get("tool")
-                    args = step.get("args") or {}
-                    # 기록은 항상 남기되, 화면 출력은 show_progress로 제어
-                    try:
-                        rec["progress_logs"].append(f"계획: {tool} 실행 준비")
-                    except Exception:
-                        pass
-                    if show_progress:
-                        _qput(f"계획: {tool} 실행 준비\n")
+                # 계획/실행 진행 로그 수집/스트림은 비활성화했습니다.
                 if finish_hint:
                     break
 
@@ -244,39 +273,11 @@ def stream_react_rag_generator(
                         details.append({"name": tool, "args": args})
                     except Exception:
                         pass
-                    # 기록은 항상 남기되, 화면 출력은 show_progress로 제어
-                    try:
-                        if tool:
-                            rec["progress_logs"].append(f"🛠️ {tool} 호출")
-                        if obs is not None:
-                            txt = str(obs)
-                            if len(txt) > 240:
-                                txt = txt[:240] + "…"
-                            rec["progress_logs"].append(f"관찰: {txt}")
-                    except Exception:
-                        pass
-                    if show_progress:
-                        if tool:
-                            _qput(f"🛠️ {tool} 호출\n")
-                        if obs is not None:
-                            # 너무 길면 요약해서 출력
-                            try:
-                                txt = str(obs)
-                                if len(txt) > 600:
-                                    txt = txt[:600] + "…"
-                                _qput(f"관찰: {txt}\n")
-                            except Exception:
-                                pass
+                    # 실행/관찰 진행 로그의 본문 스트림 출력은 비활성화했습니다.
 
                 state = await react_self_eval_node(state, model)
                 cont = bool(state.get("react_should_continue"))
                 if cont:
-                    try:
-                        rec["progress_logs"].append("계속 진행합니다…")
-                    except Exception:
-                        pass
-                    if show_progress:
-                        _qput("계속 진행합니다…\n")
                     continue
                 break
 
@@ -307,6 +308,13 @@ def stream_react_rag_generator(
                     "불필요한 도구 사용 계획은 만들지 말고, 지금 입력에 친근하게 답변만 출력하세요."
                 )
                 vars_map = dict(extra_vars or {})
+                # 활성 프로필명을 호칭으로 사용
+                try:
+                    _user_name = vars_map.get("user_id")
+                    if isinstance(_user_name, str) and _user_name.strip():
+                        sys_prompt += f"\n[호칭 지침]\n- 사용자를 '{_user_name.strip()}'님으로 호칭하세요. '사용자' 대신 프로필명을 사용합니다.\n"
+                except Exception:
+                    pass
                 pinned = vars_map.get("pinned_core_facts") if isinstance(vars_map, dict) else None
                 if pinned:
                     sys_prompt += f"\n[핵심 사실 요약]\n{str(pinned)[:800]}\n"
@@ -322,7 +330,10 @@ def stream_react_rag_generator(
                         token = None
                     if token:
                         rec.setdefault("tokens", []).append(token)
-                        _qput(token)
+                        try:
+                            token_queue.put(token)
+                        except Exception:
+                            pass
                 rec["final_text"] = "".join(rec.get("tokens", []))
                 return
 
@@ -340,6 +351,14 @@ def stream_react_rag_generator(
                 sys_prompt = (
                     "당신은 친절한 한국어 어시스턴트입니다. 아래 사용자 요청과 도구 관찰을 참고하여 간결하고 도움되는 답변만 출력하세요."
                 )
+                # 활성 프로필명을 호칭으로 사용
+                try:
+                    _vars_map = dict(extra_vars or {})
+                    _user_name = _vars_map.get("user_id")
+                    if isinstance(_user_name, str) and _user_name.strip():
+                        sys_prompt += f"\n[호칭 지침]\n- 사용자를 '{_user_name.strip()}'님으로 호칭하세요. '사용자' 대신 프로필명을 사용합니다.\n"
+                except Exception:
+                    pass
                 user_blk = (
                     f"요청: {user_request}\n\n"
                     f"관찰 요약:\n" + ("\n".join(brief_obs) if brief_obs else "(없음)") + "\n\n"
@@ -359,13 +378,19 @@ def stream_react_rag_generator(
                     if token:
                         tokens.append(token)
                         rec.setdefault("tokens", []).append(token)
-                        _qput(token)
+                        try:
+                            token_queue.put(token)
+                        except Exception:
+                            pass
                 rec["final_text"] = "".join(tokens) if tokens else str(final_msg)
             except Exception as e:
                 # 스트리밍 실패 시 최종 메시지를 한 번에 출력
                 txt = str(final_msg)
                 rec["final_text"] = txt
-                _qput(txt)
+                try:
+                    token_queue.put(txt)
+                except Exception:
+                    pass
                 try:
                     _LOGGER.error(
                         "[STREAMING ERROR] compose streaming failure: %s",
@@ -373,9 +398,15 @@ def stream_react_rag_generator(
                     )
                 except Exception:
                     pass
+            finally:
+                # 핸들러 누수 방지를 위해 분리
+                try:
+                    _logger.removeHandler(_handler)
+                except Exception:
+                    pass
         except Exception as e:
             rec["error"] = str(e)
-            # Structured logging: capture full stack including ExceptionGroup sub-exceptions
+            # 구조화 로깅: ExceptionGroup 하위 예외까지 포함해 전체 스택 캡처
             try:
                 loop_info = None
                 try:
@@ -393,8 +424,12 @@ def stream_react_rag_generator(
                 )
             except Exception:
                 pass
-            # Also surface a short marker to the UI stream so user sees something immediate
-            _qput("\n[에러] streaming failure - see frontend/logs/streaming.log")
+            # UI 스트림에 짧은 마커도 흘려 사용자에게 즉시 표기
+            # UI 진행 로그 스트림은 비활성화 상태이므로 에러 마커를 토큰 스트림에만 남깁니다.
+            try:
+                token_queue.put("\n[에러] streaming failure - see frontend/logs/streaming.log")
+            except Exception:
+                pass
         finally:
             done.set()
 

@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+  backend-mcp:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.conda
+    # Optional: uncomment to force a specific platform (helpful on Apple Silicon)
+    # platform: linux/arm64/v8

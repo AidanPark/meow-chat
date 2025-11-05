@@ -20,7 +20,7 @@ async def create_cat_health_agent():
         },
         "analysis": {
             "command": "python3", 
-            "args": ["./cat_health_analysis_server.py"],
+            "args": ["./cat_health_server.py"],
             "transport": "stdio",
         },
         "vet_knowledge": {

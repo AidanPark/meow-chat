@@ -1,19 +1,18 @@
 """
-수학 & 유틸리티 서버 - 포트 8000
-기본적인 계산과 유틸리티 기능 제공
+수학 서버 - 포트 8000
+기본적인 계산과 간단한 단위 변환 기능 제공
 """
 
 import os
 import sys
 import logging
-from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 import uvicorn
 
-# Bootstrap sys.path so that `mcp_servers` package can be imported when running from subfolders
+# 하위 폴더에서 실행할 때도 `mcp_servers` 패키지를 임포트할 수 있도록 sys.path 보정
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
@@ -34,7 +33,7 @@ mcp.settings.port = _port
 # 수학 도구들
 @mcp.tool()
 def add(a: int, b: int) -> int:
-    """Add two numbers"""
+    """두 수를 더합니다"""
     logger.info(f"🧮 ADD 도구 호출: {a} + {b}")
     result = a + b
     logger.info(f"🧮 ADD 결과: {result}")
@@ -42,7 +41,7 @@ def add(a: int, b: int) -> int:
 
 @mcp.tool()
 def multiply(a: int, b: int) -> int:
-    """Multiply two numbers"""
+    """두 수를 곱합니다"""
     logger.info(f"🧮 MULTIPLY 도구 호출: {a} × {b}")
     result = a * b
     logger.info(f"🧮 MULTIPLY 결과: {result}")
@@ -50,7 +49,7 @@ def multiply(a: int, b: int) -> int:
 
 @mcp.tool()
 def subtract(a: int, b: int) -> int:
-    """Subtract two numbers"""
+    """두 수를 뺍니다"""
     logger.info(f"🧮 SUBTRACT 도구 호출: {a} - {b}")
     result = a - b
     logger.info(f"🧮 SUBTRACT 결과: {result}")
@@ -58,7 +57,7 @@ def subtract(a: int, b: int) -> int:
 
 @mcp.tool()
 def divide(a: float, b: float) -> float:
-    """Divide two numbers"""
+    """두 수를 나눕니다"""
     logger.info(f"🧮 DIVIDE 도구 호출: {a} ÷ {b}")
     if b == 0:
         logger.error("🧮 DIVIDE 오류: 0으로 나눌 수 없음")
@@ -69,7 +68,7 @@ def divide(a: float, b: float) -> float:
 
 @mcp.tool()
 async def convert_units(value: float, from_unit: str, to_unit: str) -> float:
-    """Convert between different units (temperature, weight, length)"""
+    """단위 변환 (온도, 무게, 길이)"""
     logger.info(f"🔧 CONVERT 도구 호출: {value} {from_unit} → {to_unit}")
     
     # 온도 변환
@@ -95,7 +94,7 @@ async def convert_units(value: float, from_unit: str, to_unit: str) -> float:
 
 @mcp.tool()
 def calculate_percentage(part: float, total: float) -> float:
-    """Calculate percentage of part from total"""
+    """전체 대비 비율(%)을 계산합니다"""
     logger.info(f"📊 PERCENTAGE 도구 호출: {part}/{total}")
     if total == 0:
         logger.error("📊 PERCENTAGE 오류: 전체값이 0입니다")
@@ -105,7 +104,7 @@ def calculate_percentage(part: float, total: float) -> float:
     return result
 
 if __name__ == "__main__":
-    logger.info("🚀 수학 & 유틸리티 MCP 서버 시작 중...")
+    logger.info("🚀 수학 MCP 서버 시작 중...")
     logger.info("📋 등록된 도구들: add, multiply, subtract, divide, convert_units, calculate_percentage")
     logger.info(f"🌐 서버 주소: http://{mcp.settings.host or '127.0.0.1'}:{mcp.settings.port or 8000} (SSE: /sse, Health: /health)")
 

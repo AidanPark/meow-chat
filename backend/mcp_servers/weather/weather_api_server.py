@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 import uvicorn
 
-# Bootstrap sys.path so that `mcp_servers` package can be imported when running from subfolders
+# 하위 폴더에서 실행할 때도 `mcp_servers` 패키지를 임포트할 수 있도록 sys.path 보정
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
@@ -34,7 +34,7 @@ mcp.settings.port = _port
 
 @mcp.tool()
 async def get_weather(location: str) -> str:
-    """Get current weather information for a specific city or location"""
+    """특정 도시/지역의 현재 날씨 정보를 조회합니다."""
     logger.info(f"🌤️ WEATHER 도구 호출: {location}")
     
     # 실제로는 OpenWeatherMap API 등을 호출
@@ -51,7 +51,7 @@ async def get_weather(location: str) -> str:
 
 @mcp.tool()
 async def get_forecast(location: str, days: int = 3) -> str:
-    """Get weather forecast for multiple days (1-7 days)"""
+    """다일(1~7일) 예보를 조회합니다."""
     logger.info(f"🌤️ FORECAST 도구 호출: {location}, {days}일간")
     
     if days < 1 or days > 7:
@@ -73,7 +73,7 @@ async def get_forecast(location: str, days: int = 3) -> str:
 
 @mcp.tool()
 async def get_air_quality(location: str) -> str:
-    """Get air quality information for a location"""
+    """해당 지역의 대기질(AQI) 정보를 조회합니다."""
     logger.info(f"🌫️ AIR_QUALITY 도구 호출: {location}")
     
     await asyncio.sleep(0.4)  # API 호출 시뮬레이션
@@ -88,7 +88,7 @@ async def get_air_quality(location: str) -> str:
 
 @mcp.tool()
 async def get_time_zone(location: str) -> str:
-    """Get timezone information for a location"""
+    """해당 지역의 시간대 정보를 조회합니다."""
     logger.info(f"🕐 TIMEZONE 도구 호출: {location}")
     
     await asyncio.sleep(0.2)
@@ -114,7 +114,7 @@ async def get_time_zone(location: str) -> str:
 
 @mcp.tool()
 async def search_location(query: str) -> str:
-    """Search for location information and coordinates"""
+    """지역 정보와 좌표를 검색합니다."""
     logger.info(f"📍 LOCATION 도구 호출: {query}")
     
     await asyncio.sleep(0.3)
