@@ -128,7 +128,6 @@ if not _ORCH_LOGGER.handlers:
         # 파일 핸들러 실패 시 콘솔 로깅만 사용합니다.
         pass
 
-
 def _preview_data(data: Any, max_len: int = 1200) -> str:
     """로그에 출력하기 위한 안전한 요약 문자열(최대 길이 제한)을 생성합니다."""
     try:
@@ -213,7 +212,6 @@ def router_node(state: OrchestratorState) -> OrchestratorState:
     """
     return state
 
-
 async def math_node(state: OrchestratorState, invoker: MCPToolInvoker) -> OrchestratorState:
     """MathUtilityServer 도구(add/subtract/… 등)를 호출하는 노드.
 
@@ -266,7 +264,6 @@ async def math_node(state: OrchestratorState, invoker: MCPToolInvoker) -> Orches
         state["tools_used"] = used
     return state
 
-
 async def weather_node(state: OrchestratorState, invoker: MCPToolInvoker) -> OrchestratorState:
     """WeatherAPIServer 도구(get_weather/get_forecast/… 등)를 호출하는 노드.
 
@@ -308,7 +305,6 @@ async def weather_node(state: OrchestratorState, invoker: MCPToolInvoker) -> Orc
         used.append(record)
         state["tools_used"] = used
     return state
-
 
 def compose_node(state: OrchestratorState) -> OrchestratorState:
     """규칙 기반 결과 합성 노드.
@@ -376,7 +372,6 @@ def build_math_weather_graph(client) -> Any:
 
     return graph.compile()
 
-
 async def run_math_weather(client, task: TaskType, inputs: Dict[str, Any]) -> OrchestratorState:
     """Math/Weather 스켈레톤 그래프의 실행 엔트리포인트.
 
@@ -395,7 +390,6 @@ async def run_math_weather(client, task: TaskType, inputs: Dict[str, Any]) -> Or
     result: OrchestratorState = await app.ainvoke(init)
     return result
 
-
 def _resolve_vars(obj: Any, vars_map: Dict[str, Any]) -> Any:
     # 문자열에서 ${var} 치환. dict/list는 재귀.
     if isinstance(obj, str):
@@ -410,15 +404,11 @@ def _resolve_vars(obj: Any, vars_map: Dict[str, Any]) -> Any:
         return {k: _resolve_vars(v, vars_map) for k, v in obj.items()}
     return obj
 
-
-# (Planner 관련 코드는 제거되었습니다)
-
 class PlanStep(TypedDict, total=False):
     """ReAct 단계에서 사용하는 경량 Step 타입."""
     tool: str
     args: Dict[str, Any]
     save_as: Optional[str]
-
 
 class PlanSpec(TypedDict, total=False):
     """ReAct에서 내부적으로 사용하는 간단한 Plan 사양."""
@@ -499,6 +489,8 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
         "\n[도구 선택 규칙]\n"
         "- 이미지 첨부가 있고 검사/혈액/수치/결과지 분석이 필요하면, 통합 도구(extract_lab_report)에 이미지 경로(paths)를 직접 전달하세요.\n"
         "- 중간 OCR 단계는 도구 내부에서 처리됩니다. 별도의 OCR 호출은 불필요합니다.\n"
+        "- 이미지 경로는 vars.image_paths 배열로 제공됩니다. 이 값을 extract_lab_report(args.paths)로 그대로 사용하세요.\n"
+        "  예: {\"paths\": ${image_paths}} 처럼 따옴표 없이 배열 그대로 넘기세요(문자열로 감싸지 마세요).\n"
         "- 실패 시 가능한 정보로 응답하고, 의료 조언은 정보 제공용임을 명시하세요.\n"
     )
     if pinned:
@@ -613,6 +605,62 @@ async def react_execute_node(state: OrchestratorState, client) -> OrchestratorSt
         args = executed_step.get("args") or {}
         try:
             resolved_args = _resolve_vars(args, vars_map)
+            # extract_lab_report: paths 정규화 및 자동 주입
+            if name == "extract_lab_report":
+                try:
+                    def _norm_paths(val: Any) -> List[str]:
+                        out: List[str] = []
+                        if val is None:
+                            return out
+                        # 이미 리스트/튜플인 경우
+                        if isinstance(val, (list, tuple)):
+                            # 단일 원소가 문자열화된 리스트인 경우 풀기 시도
+                            if len(val) == 1 and isinstance(val[0], str):
+                                s = val[0].strip()
+                                if s.startswith("[") or s.startswith("("):
+                                    try:
+                                        import ast as _ast
+                                        parsed = _ast.literal_eval(s)
+                                        if isinstance(parsed, (list, tuple)):
+                                            return [str(x) for x in parsed if str(x).strip()]
+                                    except Exception:
+                                        pass
+                            return [str(x) for x in val if str(x).strip()]
+                        # 문자열인 경우: 리스트 문자열이면 파싱, 아니면 단일 경로로 처리
+                        if isinstance(val, str):
+                            s = val.strip()
+                            if s.startswith("[") or s.startswith("("):
+                                try:
+                                    import json as __json
+                                    try:
+                                        parsed = __json.loads(s)
+                                    except Exception:
+                                        import ast as _ast
+                                        parsed = _ast.literal_eval(s)
+                                    if isinstance(parsed, (list, tuple)):
+                                        return [str(x) for x in parsed if str(x).strip()]
+                                except Exception:
+                                    pass
+                            if s:
+                                return [s]
+                        # 기타 타입은 무시
+                        return out
+
+                    # 1) 현재 args.paths 정규화
+                    if isinstance(resolved_args, dict) and "paths" in resolved_args:
+                        normalized = _norm_paths(resolved_args.get("paths"))
+                    else:
+                        normalized = []
+                    # 2) 비어있으면 vars.image_paths 사용
+                    if not normalized and isinstance(vars_map, dict):
+                        _ips = vars_map.get("image_paths")
+                        normalized = _norm_paths(_ips)
+                    # 3) 최종 반영
+                    if normalized:
+                        resolved_args = dict(resolved_args or {})
+                        resolved_args["paths"] = normalized
+                except Exception:
+                    pass
             # 실행 전 로깅 (resolved args 포함)
             try:
                 _ORCH_LOGGER.info(
@@ -773,7 +821,6 @@ async def react_execute_node(state: OrchestratorState, client) -> OrchestratorSt
     state["vars"] = vars_map
     return state
 
-
 async def react_self_eval_node(state: OrchestratorState, model) -> OrchestratorState:
     """현재 관찰과 요청 대비 충분성을 자가 평가하고, 계속/종료 결정을 내립니다."""
     import json as _json
@@ -824,7 +871,6 @@ async def react_self_eval_node(state: OrchestratorState, model) -> OrchestratorS
         state["errors"] = errs
         state["react_should_continue"] = False
     return state
-
 
 def react_compose_node(state: OrchestratorState) -> OrchestratorState:
     """ReAct 루프 종료 시 사용자 메시지 생성."""
@@ -991,7 +1037,6 @@ def react_compose_node(state: OrchestratorState) -> OrchestratorState:
         pass
     return state
 
-
 def build_react_rag_graph(model, client) -> Any:
     graph = StateGraph(OrchestratorState)
 
@@ -1025,7 +1070,6 @@ def build_react_rag_graph(model, client) -> Any:
     graph.add_conditional_edges("self_eval", _continue_or_finish, {"plan": "plan", "compose_react": "compose_react"})
 
     return graph.compile()
-
 
 async def run_react_rag(client, model, user_request: str, allowed_tools: Optional[List[str]] = None, max_iters: int = 4, extra_vars: Optional[Dict[str, Any]] = None) -> OrchestratorState:
     """ReAct RAG 루프 실행 엔트리포인트.

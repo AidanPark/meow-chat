@@ -558,6 +558,12 @@ if prompt := st.chat_input(prompt_text, key=chat_input_key):
                 "cat_id": st.session_state.cat_id or "",
                 "user_id": st.session_state.user_id or os.getenv("USER", "default"),
             }
+            # 첨부 이미지가 저장되어 있으면 경로 배열을 vars로 명시 전달
+            try:
+                if saved_image_paths:
+                    extra_vars["image_paths"] = list(saved_image_paths)
+            except Exception:
+                pass
             if pinned_block:
                 extra_vars["pinned_core_facts"] = pinned_block
 
