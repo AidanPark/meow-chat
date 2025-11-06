@@ -52,7 +52,6 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict, Callable, Awai
 import json as _json
 import logging
 import os
-import time
 
 try:
     # LangGraph 1.0+ API
@@ -127,77 +126,6 @@ if not _ORCH_LOGGER.handlers:
     except Exception:
         # 파일 핸들러 실패 시 콘솔 로깅만 사용합니다.
         pass
-
-# ---------------------------------
-# 도구 목록 TTL 캐싱 및 설명 Top-N
-# ---------------------------------
-_TOOL_LIST_CACHE: Dict[str, Any] = {"tools": None, "ts": 0.0}
-try:
-    _TOOL_TTL_SECONDS = int(os.getenv("ORCH_TOOL_TTL_SECONDS", "60") or "60")
-except Exception:
-    _TOOL_TTL_SECONDS = 60
-
-# 설명 우선순위(핵심 도구 우선)
-_PRIORITY_TOOLS: List[str] = [
-    "extract_lab_report",
-    "memory_upsert",
-    "memory_read",
-    "memory_search",
-    "analyze_blood_values",
-    "normalize_lab_units",
-    "get_reference_ranges",
-    "search_kb",
-    "rerank",
-    "generate_health_report",
-    "assess_kidney_function",
-]
-
-try:
-    _DESC_TOPN = int(os.getenv("ORCH_TOOL_DESC_TOPN", "10") or "10")
-except Exception:
-    _DESC_TOPN = 10
-
-
-async def _get_tools_cached(client) -> List[Any]:
-    """TTL 캐시가 적용된 MCP 도구 목록 조회.
-
-    - TTL 이내면 캐시를 사용하고, 만료 시 라이브 조회 후 갱신합니다.
-    - 실패 시에는 폴백으로 즉시 라이브 조회를 시도합니다.
-    """
-    now = time.time()
-    try:
-        cached = _TOOL_LIST_CACHE.get("tools")
-        ts = float(_TOOL_LIST_CACHE.get("ts") or 0.0)
-        if (not cached) or ((now - ts) > float(_TOOL_TTL_SECONDS)):
-            tools = await client.get_tools()
-            _TOOL_LIST_CACHE["tools"] = tools
-            _TOOL_LIST_CACHE["ts"] = now
-            return tools
-        return cached  # type: ignore[return-value]
-    except Exception:
-        return await client.get_tools()
-
-
-def _pick_desc_targets(available: List[Dict[str, Any]], top_n: int) -> set[str]:
-    """도구 설명을 붙일 대상 Top-N을 선택합니다.
-
-    - 우선순위 목록에 포함된 도구를 먼저 채우고, 부족하면 나머지를 원래 순서로 채웁니다.
-    - 반환: 설명을 포함할 도구 이름 집합
-    """
-    names: List[str] = [str(a.get("name")) for a in available if isinstance(a.get("name"), str) and a.get("name")]
-    chosen: List[str] = []
-    for p in _PRIORITY_TOOLS:
-        if p in names and p not in chosen:
-            chosen.append(p)
-            if len(chosen) >= top_n:
-                break
-    if len(chosen) < top_n:
-        for n in names:
-            if n not in chosen:
-                chosen.append(n)
-                if len(chosen) >= top_n:
-                    break
-    return set(chosen)
 
 def _preview_data(data: Any, max_len: int = 1200) -> str:
     """로그에 출력하기 위한 안전한 요약 문자열(최대 길이 제한)을 생성합니다."""
@@ -515,7 +443,7 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
 
     # 간단한 도구 목록 추출(이름만)
     try:
-        tools = await _get_tools_cached(client)
+        tools = await client.get_tools()
         available = []
         # MCP tools
         for t in tools:
@@ -536,15 +464,6 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
             if isinstance(d, str) and len(d) > 260:
                 d = d[:260] + "…"
             available.append({"name": lt.name, "desc": d or ""})
-        # 설명 Top-N만 유지하고, 나머지는 이름만 노출
-        try:
-            desc_targets = _pick_desc_targets(available, int(_DESC_TOPN))
-            for a in available:
-                nm = a.get("name")
-                if not (isinstance(nm, str) and nm in desc_targets):
-                    a["desc"] = ""
-        except Exception:
-            pass
     except Exception:
         available = [{"name": n, "desc": ""} for n in (allowed or [])]
 
