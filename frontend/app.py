@@ -985,23 +985,43 @@ def run_chat_turn(user_message: str, saved_image_paths: list[str]) -> None:
         try:
             model, client = get_model_and_client()
 
-            # 핵심 사실 블록 구성(선택 사항)
+            # 핵심 사실 블록 구성(캐시 우선 사용: 재계산은 저장 이벤트/TTL/지연 프레임 이후만)
             pinned_block: str | None = None
             try:
-                pinned_block = build_pinned_core_facts_block(
-                    user_id=st.session_state.user_id,
-                    user_message=user_message,
-                    summary_text=None,
-                    model=model,
-                    max_tokens=int(
-                        st.session_state.get("pinned_token_budget", 400)
-                    ),
-                    per_item_cap=int(
-                        st.session_state.get("memory_item_token_cap", 150)
-                    ),
-                    max_queries=int(st.session_state.get("pinned_max_queries", 6)),
-                    importance_min=0.8,
-                )
+                now_ts = time.time()
+                cache = st.session_state.get("pinned_preview_cache", {"text": None, "ts": 0.0})
+                ttl = int(st.session_state.get("pinned_preview_ttl", 20))
+                needs_refresh = bool(st.session_state.get("pinned_preview_needs_refresh", False))
+                expired = (now_ts - float(cache.get("ts") or 0.0)) > ttl
+                defer_frame = int(st.session_state.get("pinned_preview_defer_frame", 0))
+                cur_frame = int(st.session_state.get("_metrics", {}).get("frame_seq", 0))
+                can_recompute_now = (cur_frame >= defer_frame)
+
+                cached_text = cache.get("text")
+                if cached_text and not needs_refresh and not expired:
+                    pinned_block = cached_text
+                else:
+                    if can_recompute_now:
+                        # 프리뷰 모델로 재계산하여 캐시 갱신(비용 절감, 품질 유지)
+                        model_prev = get_preview_model()
+                        text_new = build_pinned_core_facts_block(
+                            user_id=st.session_state.user_id,
+                            user_message=user_message,
+                            summary_text=None,
+                            model=model_prev,
+                            max_tokens=int(st.session_state.get("pinned_token_budget", 400)),
+                            per_item_cap=int(st.session_state.get("memory_item_token_cap", 150)),
+                            max_queries=int(st.session_state.get("pinned_max_queries", 6)),
+                            importance_min=0.8,
+                        )
+                        if text_new:
+                            st.session_state["pinned_preview_cache"] = {"text": text_new, "ts": now_ts}
+                            st.session_state["pinned_preview_needs_refresh"] = False
+                            pinned_block = text_new
+                        else:
+                            pinned_block = cached_text  # 실패 시 캐시 폴백
+                    else:
+                        pinned_block = cached_text  # 지연 프레임 이전에는 캐시만 사용
             except Exception:
                 pinned_block = None
 
