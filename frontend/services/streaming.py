@@ -221,6 +221,9 @@ def stream_react_rag_generator(
             _handler = InMemoryBufferHandler(orch_ring)
             _handler.setLevel(logging.INFO)
             _logger.addHandler(_handler)
+            # 플래너/셀프평가는 최종 모델과 동일 모델을 사용 (롤백)
+            planner_model = model
+            evaluator_model = model
             # 초기 상태 구성
             from typing import cast
             state: OrchestratorState = cast(OrchestratorState, {
@@ -286,6 +289,25 @@ def stream_react_rag_generator(
             final_msg = state.get("message") or ""
             outs = state.get("outputs") or {}
             errs = state.get("errors") or []
+            # 하이브리드 규칙 적용:
+            # - 작은 인사/스몰토크(도구 사용 없음) + 계획 finish(message) → verbatim 출력
+            # - 도구 사용이 포함되면(steps/execute됨) → 아래 일반 합성/리라이팅 경로를 사용
+            try:
+                finish_hint = state.get("react_finish") or {}
+            except Exception:
+                finish_hint = {}
+            try:
+                tools_used = state.get("tools_used") or []
+            except Exception:
+                tools_used = []
+            if isinstance(finish_hint, dict) and (finish_hint.get("use") == "message") and (not tools_used):
+                if isinstance(final_msg, str) and final_msg.strip():
+                    rec["final_text"] = final_msg
+                    try:
+                        token_queue.put(final_msg)
+                    except Exception:
+                        pass
+                    return
             # 랩리포트 저장 성공 여부 및 요약을 rec로 전달
             try:
                 vars_map = state.get("vars") or {}
@@ -303,9 +325,11 @@ def stream_react_rag_generator(
             # 스몰토크/무플랜 폴백: 모델 스트리밍으로 직접 응답 생성
             no_effective_plan = (not final_msg or str(final_msg).strip() in ("", "실행할 계획이 없었습니다.")) and (not outs) and (not errs)
             if no_effective_plan:
+                # '전담 주치의' 페르소나 기반 스몰토크 폴백으로 복원
                 sys_prompt = (
-                    "당신은 친절하고 간결한 한국어 비서입니다. 작은 인사말이나 잡담에도 따뜻하게 응답하세요.\n"
-                    "불필요한 도구 사용 계획은 만들지 말고, 지금 입력에 친근하게 답변만 출력하세요."
+                    "당신은 사용자의 고양이를 유아기부터 지속적으로 케어해 온 '전담 주치의'입니다.\n"
+                    "톤: 따뜻하고 공감적이되, 의학적 판단/설명은 전문적이고 침착하게.\n"
+                    "작은 인사/잡담에도 친근히 응답하되, 불필요한 도구 계획 없이 바로 답변만 출력하세요."
                 )
                 vars_map = dict(extra_vars or {})
                 # 활성 프로필명을 호칭으로 사용
@@ -348,22 +372,87 @@ def stream_react_rag_generator(
                     line = f"- {tool}: {str(obs)[:200]}" if tool else f"- {str(obs)[:200]}"
                     brief_obs.append(line)
 
-                sys_prompt = (
-                    "당신은 친절한 한국어 어시스턴트입니다. 아래 사용자 요청과 도구 관찰을 참고하여 간결하고 도움되는 답변만 출력하세요."
+                # 랩 리포트 특화 합성: lab_env 또는 extract_lab_report 관찰이 있으면 전문 프롬프트 사용으로 복원
+                def _get_merge_env() -> Any:
+                    try:
+                        vmap = state.get("vars") or {}
+                        env = vmap.get("lab_env")
+                        if env is None:
+                            outs = state.get("outputs") or {}
+                            env = outs.get("extract_lab_report")
+                        # 문자열이면 JSON 파싱 시도
+                        if isinstance(env, str):
+                            import json as __json
+                            try:
+                                env = __json.loads(env)
+                            except Exception:
+                                return None
+                        return env
+                    except Exception:
+                        return None
+
+                merge_env = _get_merge_env()
+                use_lab_prompt = False
+                if isinstance(merge_env, dict) and merge_env.get("stage") == "merge":
+                    use_lab_prompt = True
+
+                # 공통: 호칭/개인화 컨텍스트
+                sys_greeting = (
+                    "당신은 사용자의 고양이를 아주 어릴 때부터 지금까지 돌봐 온 '전담 주치의'입니다.\n"
+                    "말투는 따뜻하고 공감적이되, 의학적 판단/설명은 전문적이고 침착하게 유지하세요."
                 )
-                # 활성 프로필명을 호칭으로 사용
                 try:
                     _vars_map = dict(extra_vars or {})
                     _user_name = _vars_map.get("user_id")
                     if isinstance(_user_name, str) and _user_name.strip():
-                        sys_prompt += f"\n[호칭 지침]\n- 사용자를 '{_user_name.strip()}'님으로 호칭하세요. '사용자' 대신 프로필명을 사용합니다.\n"
+                        sys_greeting += f"\n[호칭 지침]\n- 사용자를 '{_user_name.strip()}'님으로 호칭하세요. '사용자' 대신 프로필명을 사용합니다.\n"
                 except Exception:
                     pass
-                user_blk = (
-                    f"요청: {user_request}\n\n"
-                    f"관찰 요약:\n" + ("\n".join(brief_obs) if brief_obs else "(없음)") + "\n\n"
-                    f"초안: {final_msg}\n"
-                )
+                pinned = None
+                try:
+                    pinned = (extra_vars or {}).get("pinned_core_facts")
+                except Exception:
+                    pinned = None
+
+                if use_lab_prompt:
+                    # 수의사 수준 합성 프롬프트: 표 → 임상 소견 순서, 범위/단위 주의, 개인화 반영
+                    sys_prompt = (
+                        sys_greeting
+                        + "\n수의 내과 전문의로서, 제공된 검사결과 표를 기반으로 안정적이고 재현 가능한 해석을 작성합니다.\n"
+                        + "반드시 아래 출력 형식을 지키세요.\n"
+                        + "\n[출력 형식]\n"
+                        + "1) 데이터프레임 표(마크다운 표 허용): 컬럼 = [항목, 값, 단위, 참고범위, 정상여부, 방향, 중증도]\\n"
+                        + "   - 정상여부: 정상|비정상|불명(범위 없음)\\n"
+                        + "   - 방향: 상(↑)|하(↓)|-\\n"
+                        + "   - 중증도: 경도|중등도|중증 (필요 시)\\n"
+                        + "2) 종합 임상 판단과 소견: 병태생리/감별진단 후보/권장 추가검사·관리/주의·한계\\n"
+                        + "\n[판정 규칙]\n"
+                        + "- 우선 리포트에 포함된 참고범위(reference_min/max 또는 low/high/reference_range)를 기준으로 정상/이상 판정\\n"
+                        + "- 범위가 누락되면 '불명(범위 없음)'으로 표기하고 소견에서 출처 부족을 명시\\n"
+                        + "- 단위가 의심되면 변환 후보만 제시하고, 원 단위를 유지하여 신중히 기술\\n"
+                        + "- 응급/중증 임계값은 보수적으로 표시하되 과장 금지\\n"
+                        + "\n[개인화 컨텍스트]\n"
+                        + (str(pinned)[:800] if isinstance(pinned, str) else "(없음)")
+                    )
+                    # 사용자 블록: 요청, 관찰 요약, 그리고 초안(검사항목 표 요약 포함)
+                    user_blk = (
+                        f"요청: {user_request}\n\n"
+                        f"관찰 요약:\n" + ("\n".join(brief_obs) if brief_obs else "(없음)") + "\n\n"
+                        f"검사표(초안):\n{final_msg}\n\n"
+                        "위의 표를 근거로 [출력 형식]을 그대로 따르세요."
+                    )
+                else:
+                    # 일반 프롬프트(비랩 상황)
+                    sys_prompt = (
+                        sys_greeting
+                        + "\n아래 사용자 요청과 도구 관찰을 참고하여 간결하고 도움되는 답변만 출력하세요."
+                    )
+                    user_blk = (
+                        f"요청: {user_request}\n\n"
+                        f"관찰 요약:\n" + ("\n".join(brief_obs) if brief_obs else "(없음)") + "\n\n"
+                        f"초안: {final_msg}\n"
+                    )
+
                 tokens: List[str] = []
                 async for chunk in model.astream([
                     {"role": "system", "content": sys_prompt},

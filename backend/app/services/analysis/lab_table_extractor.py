@@ -186,7 +186,15 @@ class LabTableExtractor:
         self.settings = settings or Settings()
         self.logger = logger or logging.getLogger(__name__)
         # LLM 클라이언트는 내부에서 관리한다.
-        self.llm_model = llm_model or "gpt-4.1-mini"
+        # 모델 우선순위: 전달 인자 → LAB_TABLE_EXTRACTOR_MODEL → MEOW_LLM_MODEL → OPENAI_DEFAULT_MODEL → 폴백
+        _default_model = os.environ.get("OPENAI_DEFAULT_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini"
+        _backend_default = os.environ.get("MEOW_LLM_MODEL", _default_model) or _default_model
+        self.llm_model = (
+            llm_model
+            or os.environ.get("LAB_TABLE_EXTRACTOR_MODEL", _backend_default)
+            or _backend_default
+        )
+
         self.llm = None
         # 우선순위: 전달된 api_key > 환경변수 OPENAI_API_KEY
         self.llm_api_key = api_key or os.environ.get("OPENAI_API_KEY")

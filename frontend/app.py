@@ -8,10 +8,15 @@ Meow Chat 프론트엔드
 import os
 import sys
 from datetime import datetime
+import time
 import io
 import re
 import streamlit as st
 import streamlit.components.v1 as components
+import threading
+import uuid
+# 전역 메모리 쓰기 락(스트림릿 세션과 무관하게 백그라운드 스레드에서 사용 가능)
+MEM_WRITE_LOCK = threading.Lock()
 
 # MCP 서버와 연결하는 LangChain 어댑터
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -95,6 +100,92 @@ def init_state() -> None:
         ss.summary_text = None
     ss.setdefault("orch_logs_accum", [])
     ss.setdefault("_orch_last_line", None)
+    # --- 계측/디버그 상태 ---
+    ss.setdefault("_metrics", {
+        "frame_seq": 0,                 # 앱 스크립트 재실행(프레임) 카운터
+        "turn_seq": 0,                  # 사용자 발화(턴) 시퀀스
+        "current_turn": 0,              # 현재 처리 중인 턴 번호
+        "rerun_total": 0,               # 전체 rerun 호출 누계(명시적 호출만 집계)
+        "rerun_this_turn": 0,           # 현재 턴 내 rerun 호출 수
+        "last_stream_end": None,        # 마지막 스트리밍 종료 시각(ISO)
+        "last_assistant_append": None,  # 마지막 assistant 메시지 append 완료 시각(ISO)
+        "last_rerun_reason": None,      # 마지막 rerun 사유
+    })
+    ss.setdefault("debug_events", [])   # 최근 디버그 이벤트 텍스트 로그
+    ss.setdefault("_pending_rerun", []) # 디바운스된 rerun 요청 사유 목록
+    # --- 개인화 컨텍스트 미리보기 캐시/플래그 ---
+    ss.setdefault("pinned_preview_cache", {"text": None, "ts": 0.0})
+    ss.setdefault("pinned_preview_ttl", 20)  # seconds
+    ss.setdefault("pinned_preview_needs_refresh", False)
+    ss.setdefault("pinned_preview_defer_frame", 0)  # 특정 프레임 이후에만 재계산 허용
+    ss.setdefault("feature_finish_verbatim", True)   # 계획 Finish(message)를 그대로 사용
+    # --- 기능 플래그 ---
+    ss.setdefault("feature_mem_bg", True)           # 메모리 추출/저장 백그라운드 실행
+    ss.setdefault("feature_preview_mode", "ttl")   # immediate | ttl | button
+    ss.setdefault("feature_extract_timing", "pre")  # pre | post (개인화 추출 시점)
+    # --- 백그라운드 작업 상태 ---
+    ss.setdefault("_bg_jobs", {})      # job_id -> {status, started_at, finished_at, turn}
+    ss.setdefault("_bg_events", [])    # 워커가 남긴 이벤트(메인 스레드에서 처리)
+    if "_mem_write_lock" not in ss:
+        ss._mem_write_lock = threading.Lock()
+
+def _log_event(msg: str) -> None:
+    try:
+        now = datetime.now().isoformat(timespec="milliseconds")
+        m = st.session_state.get("_metrics", {})
+        prefix = f"[{now}] f#{m.get('frame_seq',0)} t#{m.get('current_turn',0)}"
+        line = f"{prefix} | {msg}"
+        arr = st.session_state.get("debug_events", [])
+        arr.append(line)
+        # 최근 200줄만 유지
+        if len(arr) > 200:
+            arr[:] = arr[-200:]
+        st.session_state["debug_events"] = arr
+        try:
+            print("[MEOW-METRICS]", line)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def _note_frame_advance() -> None:
+    try:
+        m = st.session_state["_metrics"]
+        m["frame_seq"] = int(m.get("frame_seq", 0)) + 1
+        st.session_state["_metrics"] = m
+        _log_event("frame advanced")
+    except Exception:
+        pass
+
+def _request_rerun(reason: str) -> None:
+    """rerun을 즉시 실행하지 않고 요청 사유를 수집합니다."""
+    try:
+        pending = list(st.session_state.get("_pending_rerun", []))
+        if reason not in pending:
+            pending.append(reason)
+        st.session_state["_pending_rerun"] = pending
+        _log_event(f"enqueue rerun request: {reason}")
+    except Exception:
+        pass
+
+def _perform_debounced_rerun() -> None:
+    """수집된 rerun 요청을 한 번에 처리(단일 rerun)합니다."""
+    try:
+        reasons = list(st.session_state.get("_pending_rerun", []))
+        if not reasons:
+            return
+        reason_text = ",".join(reasons)
+        # 계측 카운터는 실제 실행 시에만 증가
+        m = st.session_state.get("_metrics", {})
+        m["rerun_total"] = int(m.get("rerun_total", 0)) + 1
+        m["rerun_this_turn"] = int(m.get("rerun_this_turn", 0)) + 1
+        m["last_rerun_reason"] = reason_text
+        st.session_state["_metrics"] = m
+        st.session_state["_pending_rerun"] = []
+        _log_event(f"perform rerun: {reason_text}")
+        st.rerun()
+    except Exception:
+        pass
 
 def render_progress_html(placeholder, text: str) -> None:
     try:
@@ -201,6 +292,38 @@ def _clear_sidebar_uploader_state():
 # 세션 상태 기본값 초기화
 init_state()
 
+# 프레임(스크립트 재실행) 증가 계측
+_note_frame_advance()
+
+def _process_bg_events() -> None:
+    """백그라운드 워커가 남긴 이벤트를 수거해 세션 상태에 반영합니다."""
+    try:
+        events = list(st.session_state.get("_bg_events", []))
+        if not events:
+            return
+        st.session_state["_bg_events"] = []
+        for ev in events:
+            et = ev.get("type")
+            if et == "memory_saved":
+                ids = ev.get("ids") or []
+                saved_preview = ev.get("saved_preview") or []
+                if ids:
+                    st.session_state.last_saved_memory_ids = (st.session_state.get("last_saved_memory_ids", []) + ids)[-50:]
+                if saved_preview:
+                    cur = list(st.session_state.get("last_saved_memories", []))
+                    cur.extend(saved_preview)
+                    st.session_state.last_saved_memories = cur[-50:]
+                # 프리뷰는 다음 프레임부터 1회 재계산 (쓰기 직후 읽기 방지)
+                st.session_state["pinned_preview_needs_refresh"] = True
+                m = st.session_state.get("_metrics", {})
+                next_frame = int(m.get("frame_seq", 0)) + 1
+                st.session_state["pinned_preview_defer_frame"] = next_frame
+                _log_event(f"bg event applied: memory_saved ({len(ids)} ids)")
+    except Exception as e:
+        _log_event(f"bg event processing failed: {e}")
+
+_process_bg_events()
+
 
 def render_sidebar() -> None:
     """사이드바 전체 UI를 렌더링하고 진행 로그 표시용 플레이스홀더를 초기화합니다."""
@@ -231,9 +354,14 @@ def render_sidebar() -> None:
                 st.session_state.uploaded_images = stored
                 st.session_state.previous_uploaded_count = len(stored)
             else:
-                # 사용자가 명시적으로 X 버튼으로 비웠을 때만 초기화
+                # 사용자가 X 버튼으로 비웠을 때: 키 교체 없이 상태만 리셋(위젯 재생성 최소화)
                 if st.session_state.previous_uploaded_count > 0 or st.session_state.uploaded_images:
-                    _clear_sidebar_uploader_state()
+                    st.session_state.uploaded_images = []
+                    st.session_state.previous_uploaded_count = 0
+                    try:
+                        _log_event("sidebar uploader cleared (state-only reset, no key change)")
+                    except Exception:
+                        pass
 
         st.divider()
         st.subheader("🤖 오케스트레이션 (ReAct)")
@@ -358,7 +486,7 @@ def render_sidebar() -> None:
             ),
         )
 
-        st.subheader("📌 개인화 컨텍스트 (미리보기)")
+        st.subheader("📌 개인화 컨텍스트")
         st.caption("항상 프롬프트에 포함되는 개인화된 핵심 정보 요약입니다.")
         st.markdown(
             """
@@ -376,22 +504,64 @@ def render_sidebar() -> None:
             - fact, note: 일반 사실/노트
             """
         )
-        # 자동 미리보기 생성(버튼 없이 즉시 표시)
+        # 미리보기: TTL 캐시 + 이벤트 기반 + 수동 새로고침
+        col_p1, col_p2, col_p3 = st.columns([0.5, 0.3, 0.2])
+        with col_p1:
+            st.caption("미리보기는 캐시를 사용합니다(기본 20초). 저장 이벤트 시 1회 강제 갱신합니다.")
+        with col_p2:
+            # 선택: TTL 조정은 내부 상태로 유지(필요 시 주석 해제하여 UI 노출)
+            # st.number_input("미리보기 TTL(초)", min_value=5, max_value=120, step=5,
+            #                 value=int(st.session_state.get("pinned_preview_ttl", 20)), key="pinned_preview_ttl")
+            pass
+        with col_p3:
+            force_refresh = st.button("새로고침", key="btn_refresh_preview")
+
+        now_ts = time.time()
+        cache = st.session_state.get("pinned_preview_cache", {"text": None, "ts": 0.0})
+        ttl = int(st.session_state.get("pinned_preview_ttl", 20))
+        needs_refresh = bool(st.session_state.get("pinned_preview_needs_refresh", False))
+        expired = (now_ts - float(cache.get("ts") or 0.0)) > ttl
+        defer_frame = int(st.session_state.get("pinned_preview_defer_frame", 0))
+        cur_frame = int(st.session_state.get("_metrics", {}).get("frame_seq", 0))
+        mode = st.session_state.get("feature_preview_mode", "ttl")
+
+        # 쓰기 직후에는 최소 1프레임을 기다린 뒤 재계산
+        can_recompute_now = (cur_frame >= defer_frame)
+        if mode == "immediate":
+            should_recompute = can_recompute_now
+        elif mode == "button":
+            should_recompute = (force_refresh or needs_refresh) and can_recompute_now
+        else:  # ttl(default)
+            should_recompute = (force_refresh or needs_refresh or (not cache.get("text")) or expired) and can_recompute_now
         _preview_text = None
-        try:
-            model, _client = get_model_and_client()
-            _preview_text = build_pinned_core_facts_block(
-                user_id=st.session_state.user_id,
-                user_message="",
-                summary_text=st.session_state.get("summary_text"),
-                model=model,
-                max_tokens=int(st.session_state.get("pinned_token_budget", 400)),
-                per_item_cap=int(st.session_state.get("memory_item_token_cap", 150)),
-                max_queries=int(st.session_state.get("pinned_max_queries", 6)),
-                importance_min=0.8,
-            )
-        except Exception as e:
-            st.warning(f"미리보기 실패: {e}")
+        if should_recompute:
+            try:
+                model_prev = get_preview_model()
+                text_new = build_pinned_core_facts_block(
+                    user_id=st.session_state.user_id,
+                    user_message="",
+                    summary_text=st.session_state.get("summary_text"),
+                    model=model_prev,
+                    max_tokens=int(st.session_state.get("pinned_token_budget", 400)),
+                    per_item_cap=int(st.session_state.get("memory_item_token_cap", 150)),
+                    max_queries=int(st.session_state.get("pinned_max_queries", 6)),
+                    importance_min=0.8,
+                )
+                if text_new:
+                    st.session_state["pinned_preview_cache"] = {"text": text_new, "ts": now_ts}
+                    st.session_state["pinned_preview_needs_refresh"] = False
+                    _preview_text = text_new
+                else:
+                    _preview_text = cache.get("text")
+            except Exception as e:
+                # 실패 시 캐시 폴백
+                _log_event(f"preview compute failed: {e}")
+                _preview_text = cache.get("text")
+                if not _preview_text:
+                    st.info("미리보기를 생성할 수 없습니다. 잠시 후 다시 시도하거나 새로고침을 눌러주세요.")
+        else:
+            _preview_text = cache.get("text")
+
         if _preview_text:
             st.text_area("개인화 컨텍스트", value=_preview_text, height=220, key="ta_pinned_preview")
         else:
@@ -456,6 +626,34 @@ def render_sidebar() -> None:
                     st.session_state.mem_search_results = []
                     st.info("선택과 결과를 초기화했습니다.")
 
+        # --- 실험적 기능 플래그 ---
+        with st.expander("⚙️ 실험적 기능", expanded=False):
+            st.caption("문제 발생 시, 여기서 기능을 끄고 롤백할 수 있습니다.")
+            st.session_state.feature_mem_bg = st.toggle(
+                "메모리 추출/저장 백그라운드", value=bool(st.session_state.get("feature_mem_bg", True))
+            )
+            preview_mode = st.session_state.get("feature_preview_mode", "ttl")
+            mode = st.selectbox(
+                "미리보기 모드",
+                options=["ttl", "immediate", "button"],
+                index=["ttl", "immediate", "button"].index(preview_mode if preview_mode in ["ttl","immediate","button"] else "ttl"),
+                help="ttl: 캐시+이벤트 기반 / immediate: 항상 재계산(권장X) / button: 버튼/이벤트로만 재계산",
+            )
+            st.session_state.feature_preview_mode = mode
+            extract_timing = st.session_state.get("feature_extract_timing", "pre")
+            timing = st.selectbox(
+                "개인화 추출 시점",
+                options=["pre", "post"],
+                index=["pre", "post"].index(extract_timing if extract_timing in ["pre","post"] else "pre"),
+                help="pre: 턴 시작 직후 사용자 질의에서 추출(권장) / post: 응답 후 추출(구 전략)",
+            )
+            st.session_state.feature_extract_timing = timing
+
+            st.session_state.feature_finish_verbatim = st.toggle(
+                "계획 Finish(message) 그대로 사용", value=bool(st.session_state.get("feature_finish_verbatim", True)),
+                help="계획 단계에서 finish.use=message가 생성되면, 추가 리라이팅 없이 그 메시지를 최종 응답으로 사용합니다."
+            )
+
         st.divider()
         import importlib.util as _import_util
         tiktoken_ok = _import_util.find_spec("tiktoken") is not None
@@ -501,6 +699,28 @@ def render_sidebar() -> None:
                     except Exception:
                         pass
 
+        # --- 계측/진단 뷰 ---
+        with st.expander("🧪 계측 로그", expanded=False):
+            m = st.session_state.get("_metrics", {})
+            col1, col2 = st.columns(2)
+            with col1:
+                st.caption("카운터")
+                st.write(f"frame_seq: {m.get('frame_seq')}")
+                st.write(f"turn_seq: {m.get('turn_seq')}")
+                st.write(f"current_turn: {m.get('current_turn')}")
+                st.write(f"rerun_total: {m.get('rerun_total')}")
+                st.write(f"rerun_this_turn: {m.get('rerun_this_turn')}")
+            with col2:
+                st.caption("최근 시각")
+                st.write(f"last_stream_end: {m.get('last_stream_end')}")
+                st.write(f"last_assistant_append: {m.get('last_assistant_append')}")
+                st.write(f"last_rerun_reason: {m.get('last_rerun_reason')}")
+            logs = st.session_state.get("debug_events", [])
+            if logs:
+                st.caption(f"최근 이벤트 ({min(len(logs),50)}줄)")
+                # 최근 50줄만 표시
+                st.text("\n".join(logs[-50:]))
+
 
 def render_chat_main() -> None:
     """채팅 기록과 입력 UI를 렌더링하고, 전송 시 run_chat_turn을 호출하여 한 턴을 수행합니다."""
@@ -516,8 +736,18 @@ def render_chat_main() -> None:
         prompt_text += f" (📎 {len(st.session_state.uploaded_images)}개 이미지 첨부됨)"
     st.markdown("</div>", unsafe_allow_html=True)
 
-    chat_input_key = f"chat_input_{len(st.session_state.uploaded_images)}"
-    if prompt := st.chat_input(prompt_text, key=chat_input_key):
+    # 입력 키를 고정해 위젯 재생성으로 인한 불필요한 rerun을 방지
+    if prompt := st.chat_input(prompt_text, key="chat_input_main"):
+        # 새 사용자 발화 시작: 턴 시퀀스 증가 및 현재 턴 설정, rerun 카운터 리셋
+        try:
+            m = st.session_state.get("_metrics", {})
+            m["turn_seq"] = int(m.get("turn_seq", 0)) + 1
+            m["current_turn"] = int(m.get("turn_seq", 0))
+            m["rerun_this_turn"] = 0
+            st.session_state["_metrics"] = m
+            _log_event("turn started: user submitted input")
+        except Exception:
+            pass
         user_message = prompt
         if st.session_state.uploaded_images:
             image_info = f" [📎 {len(st.session_state.uploaded_images)}개 이미지 첨부]"
@@ -547,6 +777,30 @@ def render_chat_main() -> None:
             st.session_state.previous_uploaded_count = 0
 
         st.session_state.messages.append(("user", user_message))
+        _log_event("user message appended to session_state.messages")
+
+        # 턴 시작 직후(동일 턴 비반영) 개인화 추출을 백그라운드로 실행
+        try:
+            if bool(st.session_state.get("feature_mem_bg", True)) and str(st.session_state.get("feature_extract_timing", "pre")) == "pre":
+                recent_turns = list(st.session_state.messages)[-2 * int(st.session_state.get("recent_turn_window", 10)) :]
+                user_id = st.session_state.user_id or os.getenv("USER", "default")
+                job_id = f"memsave-{uuid.uuid4().hex}"
+                jobs = st.session_state.get("_bg_jobs", {})
+                jobs[job_id] = {
+                    "status": "queued",
+                    "started_at": datetime.now().isoformat(timespec="milliseconds"),
+                    "turn": st.session_state.get("_metrics", {}).get("current_turn"),
+                }
+                st.session_state["_bg_jobs"] = jobs
+                th = threading.Thread(
+                    target=_bg_extract_and_save_memories,
+                    args=(user_id, recent_turns, "", job_id),  # assistant_reply 비움
+                    daemon=True,
+                )
+                th.start()
+                _log_event(f"spawned bg memsave job (pre): {job_id}")
+        except Exception as e:
+            _log_event(f"spawn pre-reply bg job failed: {e}")
 
         with st.chat_message("user"):
             st.markdown(user_message)
@@ -560,6 +814,7 @@ def render_chat_main() -> None:
                     with img_cols[i % 3]:
                         st.image(img_file, caption=img_file.name, width=120)
 
+        # 사용자가 입력을 제출한 경우에만 턴 실행
         run_chat_turn(user_message=user_message, saved_image_paths=saved_image_paths)
 
 
@@ -604,9 +859,118 @@ def get_model_and_client():
         )
         st.stop()
 
-    model = ChatOpenAI(model="gpt-4.1-mini", streaming=True)
+    # 모델 선택: 개별 환경변수 → 기본값(OPENAI_DEFAULT_MODEL) → 하드코딩 폴백
+    _default_model = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4.1-mini")
+    _chat_model = os.getenv("FRONTEND_CHAT_STREAM_MODEL", _default_model) or _default_model
+    model = ChatOpenAI(model=_chat_model, streaming=True)
     client = MultiServerMCPClient(SERVERS)  # type: ignore[arg-type]
     return model, client
+
+
+@st.cache_resource
+def get_preview_model():
+    """미리보기 전용(비스트리밍) 모델 인스턴스.
+
+    오케스트레이션과 분리해 세션 간섭을 줄이고, 프리뷰 계산 실패 시
+    에러 메시지 대신 캐시에 폴백할 수 있도록 단순화한다.
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        st.error(
+            "OPENAI_API_KEY가 설정되지 않았습니다. .env 또는 환경변수를 확인해주세요."
+        )
+        st.stop()
+    try:
+        from langchain_openai import ChatOpenAI  # type: ignore
+    except Exception as e:
+        import importlib.metadata as _md
+
+        def _ver(pkg: str) -> str:
+            try:
+                return _md.version(pkg)
+            except Exception:
+                return "not-installed"
+
+        lc = _ver("langchain")
+        lcc = _ver("langchain-core")
+        lco = _ver("langchain-openai")
+        st.error(
+            "프리뷰 모델 로드 실패 (LangChain/OpenAI 버전 불일치 가능).\n\n"
+            f"설치된 버전:\n- langchain={lc}\n- langchain-core={lcc}\n- langchain-openai={lco}\n\n"
+            "해결: 관련 패키지 버전을 동기화하세요."
+            "\n자세한 오류: " + str(e)
+        )
+        st.stop()
+
+    # 모델 선택: 개별 환경변수 → 기본값(OPENAI_DEFAULT_MODEL) → 하드코딩 폴백
+    _default_model = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4.1-mini")
+    _preview_model = os.getenv("FRONTEND_PREVIEW_MODEL", _default_model) or _default_model
+    return ChatOpenAI(model=_preview_model, streaming=False)
+
+
+def _bg_extract_and_save_memories(user_id: str, recent_turns: list[tuple[str, str]], assistant_reply: str, job_id: str) -> None:
+    """백그라운드에서 메모리 추출(LLM) 후 Chroma에 저장하는 워커.
+
+    - 모델: 비스트리밍(preview) 모델 사용
+    - 쓰기: 세션 락으로 보호
+    - 완료: 세션의 _bg_events에 결과를 남기고 종료
+    """
+    try:
+        # 작업 시작 표시
+        jobs = st.session_state.get("_bg_jobs", {})
+        j = jobs.get(job_id, {})
+        j["status"] = "running"
+        jobs[job_id] = j
+        st.session_state["_bg_jobs"] = jobs
+        _log_event(f"bg job start: {job_id}")
+
+        model_prev = get_preview_model()
+        cands = []
+        try:
+            cands = extract_candidates(recent_turns=recent_turns, assistant_reply=assistant_reply, model=model_prev) or []
+        except Exception as e:
+            _log_event(f"bg extract_candidates failed: {e}")
+            cands = []
+
+        saved_ids = []
+        saved_preview = []
+        if cands:
+            try:
+                # 스트림릿 세션 상태 대신 전역 락 사용(백그라운드에서도 안전)
+                with MEM_WRITE_LOCK:
+                    ids = write_memories(user_id=user_id, memories=cands) or []
+                saved_ids = ids
+                # 미리보기용 저장 항목 프리뷰 구성
+                for m in cands:
+                    try:
+                        saved_preview.append({"type": m.get("type"), "content": m.get("content")})
+                    except Exception:
+                        continue
+            except Exception as e:
+                _log_event(f"bg write_memories failed: {e}")
+
+        # 메인 스레드 반영 이벤트 큐에 추가
+        ev = {"type": "memory_saved", "ids": saved_ids, "saved_preview": saved_preview}
+        arr = st.session_state.get("_bg_events", [])
+        arr.append(ev)
+        st.session_state["_bg_events"] = arr
+
+        # 작업 완료 표시
+        j["status"] = "done"
+        j["finished_at"] = datetime.now().isoformat(timespec="milliseconds")
+        jobs[job_id] = j
+        st.session_state["_bg_jobs"] = jobs
+        _log_event(f"bg job done: {job_id} (saved {len(saved_ids)})")
+    except Exception as e:
+        try:
+            _log_event(f"bg job exception: {job_id} | {e}")
+            jobs = st.session_state.get("_bg_jobs", {})
+            j = jobs.get(job_id, {})
+            j["status"] = "error"
+            j["error"] = str(e)
+            jobs[job_id] = j
+            st.session_state["_bg_jobs"] = jobs
+        except Exception:
+            pass
 
 
 
@@ -617,6 +981,7 @@ def run_chat_turn(user_message: str, saved_image_paths: list[str]) -> None:
     """
     global progress_logs_area
     with st.chat_message("assistant"):
+        message_appended = False
         try:
             model, client = get_model_and_client()
 
@@ -651,6 +1016,8 @@ def run_chat_turn(user_message: str, saved_image_paths: list[str]) -> None:
                 pass
             if pinned_block:
                 extra_vars["pinned_core_facts"] = pinned_block
+            # 구성 옵션 전달: finish 메시지를 그대로 사용할지 여부
+            extra_vars["_compose_verbatim_on_finish"] = bool(st.session_state.get("feature_finish_verbatim", True))
 
             rec: dict = {
                 "tokens": [],
@@ -739,6 +1106,14 @@ def run_chat_turn(user_message: str, saved_image_paths: list[str]) -> None:
             final_text = st.write_stream(
                 _wrap_with_orch_logs(_chain_first(text_stream, first_chunk))
             )
+            try:
+                # 스트리밍 종료 시각 기록
+                m = st.session_state.get("_metrics", {})
+                m["last_stream_end"] = datetime.now().isoformat(timespec="milliseconds")
+                st.session_state["_metrics"] = m
+                _log_event("streaming finished")
+            except Exception:
+                pass
 
             now = datetime.now().strftime("%H:%M:%S")
             for d in rec.get("tool_details", []):
@@ -752,26 +1127,60 @@ def run_chat_turn(user_message: str, saved_image_paths: list[str]) -> None:
                 if isinstance(final_text, str)
                 else (rec.get("final_text") or "")
             )
-            # 대화 기반 핵심/사실 자동 저장(항상 활성화)
+            # 대화 기반 핵심/사실 자동 저장 - 플래그에 따라 백그라운드 또는 동기 실행
             try:
                 recent_turns = list(st.session_state.messages)[-2 * int(st.session_state.get("recent_turn_window", 10)) :]
-                cands = extract_candidates(recent_turns=recent_turns, assistant_reply=final_str, model=model)
-                if cands:
-                    user_id = st.session_state.user_id or os.getenv("USER", "default")
-                    ids = write_memories(user_id=user_id, memories=cands)
-                    if ids:
-                        st.session_state.last_saved_memory_ids = (st.session_state.get("last_saved_memory_ids", []) + ids)[-50:]
-                        saved_items_preview = []
-                        for m in cands:
-                            try:
-                                saved_items_preview.append({"type": m.get("type"), "content": m.get("content")})
-                            except Exception:
-                                continue
-                        cur = list(st.session_state.get("last_saved_memories", []))
-                        cur.extend(saved_items_preview)
-                        st.session_state.last_saved_memories = cur[-50:]
-            except Exception:
-                pass
+                user_id = st.session_state.user_id or os.getenv("USER", "default")
+                extract_timing = str(st.session_state.get("feature_extract_timing", "pre"))
+                mem_bg = bool(st.session_state.get("feature_mem_bg", True))
+                if mem_bg and extract_timing == "post":
+                    job_id = f"memsave-{uuid.uuid4().hex}"
+                    jobs = st.session_state.get("_bg_jobs", {})
+                    jobs[job_id] = {
+                        "status": "queued",
+                        "started_at": datetime.now().isoformat(timespec="milliseconds"),
+                        "turn": st.session_state.get("_metrics", {}).get("current_turn"),
+                    }
+                    st.session_state["_bg_jobs"] = jobs
+                    th = threading.Thread(
+                        target=_bg_extract_and_save_memories,
+                        args=(user_id, recent_turns, final_str, job_id),
+                        daemon=True,
+                    )
+                    th.start()
+                    _log_event(f"spawned bg memsave job (post): {job_id}")
+                elif not mem_bg:
+                    # 동기 실행(롤백 모드): 비스트리밍 모델로 추출 후 락 보호 하에 저장
+                    model_prev = get_preview_model()
+                    cands = []
+                    try:
+                        cands = extract_candidates(recent_turns=recent_turns, assistant_reply=final_str, model=model_prev) or []
+                    except Exception as e:
+                        _log_event(f"sync extract_candidates failed: {e}")
+                        cands = []
+                    if cands:
+                        try:
+                            lock = st.session_state._mem_write_lock
+                            with lock:
+                                ids = write_memories(user_id=user_id, memories=cands) or []
+                            if ids:
+                                st.session_state.last_saved_memory_ids = (st.session_state.get("last_saved_memory_ids", []) + ids)[-50:]
+                                saved_preview = []
+                                for m in cands:
+                                    try:
+                                        saved_preview.append({"type": m.get("type"), "content": m.get("content")})
+                                    except Exception:
+                                        continue
+                                cur = list(st.session_state.get("last_saved_memories", []))
+                                cur.extend(saved_preview)
+                                st.session_state.last_saved_memories = cur[-50:]
+                                st.session_state["pinned_preview_needs_refresh"] = True
+                                m = st.session_state.get("_metrics", {})
+                                st.session_state["pinned_preview_defer_frame"] = int(m.get("frame_seq", 0)) + 1
+                        except Exception as e:
+                            _log_event(f"sync write_memories failed: {e}")
+            except Exception as e:
+                _log_event(f"mem save scheduling failed: {e}")
             try:
                 if rec.get("saved_memories"):
                     cur = list(st.session_state.get("last_saved_memories", []))
@@ -780,6 +1189,16 @@ def run_chat_turn(user_message: str, saved_image_paths: list[str]) -> None:
             except Exception:
                 pass
             st.session_state.messages.append(("assistant", final_str))
+            try:
+                m = st.session_state.get("_metrics", {})
+                m["last_assistant_append"] = datetime.now().isoformat(timespec="milliseconds")
+                st.session_state["_metrics"] = m
+                _log_event("assistant message appended to session_state.messages")
+            except Exception:
+                pass
+            message_appended = True
+
+            # 즉시 rerun 금지: 백그라운드 완료 이벤트가 다음 프레임에서 프리뷰를 갱신합니다.
             try:
                 print(
                     "[DEBUG] rec.lab_report_saved=",
@@ -799,12 +1218,38 @@ def run_chat_turn(user_message: str, saved_image_paths: list[str]) -> None:
                     pass
                 _clear_sidebar_uploader_state()
                 st.info("검사결과 저장 완료. 첨부 이미지 목록을 초기화했습니다.")
-                st.rerun()
+                _request_rerun("lab_report_saved_uploader_reset")
+            # 디바운스된 rerun을 한 번만 수행
+            _perform_debounced_rerun()
             st.stop()
         except Exception as e:
-            err = f"오류가 발생했습니다: {e}"
-            st.markdown(err)
-            st.session_state.messages.append(("assistant", err))
+            # 부분 결과가 있다면 우선 노출하고, 하단에 오류 메시지를 덧붙인다.
+            try:
+                partial = ""
+                try:
+                    partial = (client and client) and (rec.get("final_text") or "")  # rec에 누적된 최종 텍스트가 있으면 사용
+                except Exception:
+                    partial = rec.get("final_text") or ""
+                if not message_appended:
+                    text = partial or ""
+                    if text:
+                        text = text + f"\n\n[오류] {e}"
+                    else:
+                        text = f"오류가 발생했습니다: {e}"
+                    st.session_state.messages.append(("assistant", text))
+                    try:
+                        m = st.session_state.get("_metrics", {})
+                        m["last_assistant_append"] = datetime.now().isoformat(timespec="milliseconds")
+                        st.session_state["_metrics"] = m
+                        _log_event("assistant message appended in except")
+                    except Exception:
+                        pass
+            except Exception:
+                # 최후 수단: 오류 메시지만 남김
+                st.session_state.messages.append(("assistant", f"오류가 발생했습니다: {e}"))
+        finally:
+            # 여기서는 rerun을 호출하지 않습니다. (디바운스/플래그 기반 정책 유지)
+            pass
 
 
 ph = render_layout()

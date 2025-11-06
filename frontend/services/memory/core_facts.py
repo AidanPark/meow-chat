@@ -15,23 +15,63 @@ from .memory_utils import trim_memory_block
 
 # 한국어 키워드(1차 근사). 스키마(type 메타) 정착 전까지 사용
 CORE_QUERIES = [
+    # 프로필/기본 정보
     "프로필", "품종", "중성화", "성별", "생일", "연령",
+    # 체중/몸무게(회상 강화를 위해 명시적 키워드 추가)
+    "몸무게", "체중", "킬로그램", "weight", "kg",
+    # 안전/의료
     "알레르기", "과민", "부작용",
     "만성", "진단", "질환", "병력",
     "금기", "주의",
+    # 약/식단
     "복용", "약", "투약", "용량",
     "식단", "사료", "영양제",
 ]
 
 
+def _normalize_for_compare(text: str) -> str:
+    """중복 비교용 정규화 함수
+    - 앞머리 라벨(예: '사실:', '프로필:')은 비교 시 제거
+    - 공백/구두점/불릿 차이로 인한 미묘한 중복을 줄이기 위해 최소 정규화 수행
+    주의: 표시는 원문 그대로 유지하며, 비교에만 사용합니다.
+    """
+    import re
+
+    s = (text or "").strip()
+    # 불릿/대시 제거
+    s = re.sub(r"^[-•\s]+", "", s)
+    # 번호 매김 제거 (예: "1.", "2)")
+    s = re.sub(r"^\d+[\.)]\s*", "", s)
+    # 대표 라벨 제거 (비교용). 한국어/영문 혼용 케이스 최소 대응
+    s = re.sub(r"^(사실|프로필|profile|fact)\s*[:：]\s*", "", s, flags=re.IGNORECASE)
+    # 불필요한 접두어 정규화(비교용)
+    s = s.replace("사용자의 집 ", "")
+    # 고양이 이름 문장 정규화(비교용): "고양이 이름은 옹심이다/입니다/임" → "고양이 이름은 옹심"
+    s = re.sub(r"^(고양이\s*이름은)\s*(.+?)\s*(이다|입니다|임)[\.!\s]*$", r"\1 \2", s, flags=re.IGNORECASE)
+    # 끝의 마침표/불필요 공백 제거
+    s = re.sub(r"[\.!\s]+$", "", s)
+    # 다중 공백 축소
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
 def _dedup_keep_order(items: List[str]) -> List[str]:
-    seen = set()
+    """순서를 유지하면서 중복 제거
+    - 완전 동일 문자열은 제거
+    - 위 정규화 기준으로도 중복으로 간주하여 제거(예: '사실: X' vs 'X')
+    """
+    seen_raw = set()
+    seen_norm = set()
     out: List[str] = []
     for it in items:
-        k = it.strip()
-        if not k or k in seen:
+        k = (it or "").strip()
+        if not k:
             continue
-        seen.add(k)
+        norm = _normalize_for_compare(k)
+        if k in seen_raw or norm in seen_norm:
+            continue
+        seen_raw.add(k)
+        seen_norm.add(norm)
         out.append(k)
     return out
 
@@ -68,7 +108,16 @@ def build_pinned_core_facts_block(
             if cat_id:
                 filters["cat_id"] = cat_id
             results = retrieve_memories(user_id=user_id, user_message=f"{q} {user_message}", summary_text=summary_text, k=6, filters=filters)
-            texts = [r.get("content", "").strip() for r in results if (r.get("content") or "").strip()]
+            # 'todo' 항목은 개인화 고정 블록에서 제외
+            texts = []
+            for r in results:
+                txt = (r.get("content") or "").strip()
+                if not txt:
+                    continue
+                rtype = (r.get("type") or "").strip()
+                if rtype.lower() == "todo":
+                    continue
+                texts.append(txt)
             candidates.extend(texts)
         except Exception:
             continue
@@ -77,9 +126,8 @@ def build_pinned_core_facts_block(
         return None
 
     # 2) 정제/중복 제거 + 중요도 임계치 필터(메타가 있을 경우)
-    #    retrieve_memories는 content만 꺼내오므로 importance는 재조회 없이 판단하기 어렵다.
-    #    간단하게는 텍스트에 'profile' 키워드 기반 검색을 사용했고, 중요도 보장은 저장 시 정책으로 확보합니다.
-    #    필요 시 store.retrieve에서 importance를 메타에 포함시켜 반환하도록 확장 가능합니다.
+    #    retrieve_memories는 content만 꺼내오므로 importance는 재조회 없이 판단하기 어렵습니다.
+    #    중요도는 저장 정책(importance>=0.8 선별)으로 보장하고, 여기서는 중복 제거에 집중합니다.
     candidates = _dedup_keep_order(candidates)
 
     # 3) 토큰 예산 트리밍(문자 기반 근사/슬라이더 값 사용)

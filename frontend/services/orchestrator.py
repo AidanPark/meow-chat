@@ -480,7 +480,7 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
         "형식:\n"
         "{\n  \"action\": {\"tool\": string, \"args\": object, \"save_as\": string},\n  \"finish\": {\"use\": \"var\"|\"message\", \"value\": string}\n}\n"
         "action과 finish는 동시에 제공하지 말고, 하나만 선택하세요.\n"
-    "args에서는 제공된 변수들을 ${변수명} 형태로 참조할 수 있습니다(예: ${user_id}).\n"
+        "args에서는 제공된 변수들을 ${변수명} 형태로 참조할 수 있습니다(예: ${user_id}).\n"
         "참고: 직전 단계의 관찰 결과는 vars['_last_observation']로 제공될 수 있습니다. 저장하지 못했더라도 필요 시 ${_last_observation}로 참조하세요.\n"
     )
     # 도구 선택 규칙 힌트(절차 강제가 아닌 선택 원칙)
@@ -557,6 +557,39 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
             finish = finish or {"use": "message", "value": "허용된 도구 내에서 답변을 마칩니다."}
         else:
             steps = [action]  # 단일 스텝
+
+    # Fallback: 이미지가 있고 검사/결과지 분석 의도가 강하면 extract_lab_report 자동 계획
+    try:
+        def _has_images(vmap: Dict[str, Any]) -> bool:
+            try:
+                ips = (vmap or {}).get("image_paths")
+                if isinstance(ips, (list, tuple)):
+                    return len(ips) > 0
+                if isinstance(ips, str) and ips.strip():
+                    return True
+                return False
+            except Exception:
+                return False
+
+        def _looks_like_lab_req(txt: str) -> bool:
+            import re as _re
+            pat = r"(검사|결과지|혈액|혈구|혈청|수치|lab|리포트|분석)"
+            return bool(_re.search(pat, txt, flags=_re.IGNORECASE))
+
+        if (not steps) and (not finish) and _has_images(vars_map) and _looks_like_lab_req(user_req):
+            # 허용 도구 제한이 있으면 확인
+            if (not allowed) or ("extract_lab_report" in (allowed or [])):
+                steps = [{
+                    "tool": "extract_lab_report",
+                    "args": {"paths": "${image_paths}"},
+                    "save_as": "lab_env"
+                }]
+                try:
+                    _ORCH_LOGGER.info("[PLAN->FALLBACK] iter=%s | tool=extract_lab_report | reason=image+lab-intent", iter_no)
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     # 상태 업데이트
     state["plan"] = {"version": 1, "steps": steps, "primary": (action or {}).get("save_as")}
@@ -1099,9 +1132,11 @@ async def run_react_rag(client, model, user_request: str, allowed_tools: Optiona
         errs = result.get("errors") or []
         no_effective_plan = (not msg or str(msg).strip() == "실행할 계획이 없었습니다.") and (not outs) and (not errs)
         if no_effective_plan:
+            # '전담 주치의' 페르소나 기반의 스몰토크 친화 폴백으로 복원
             sys_prompt = (
-                "당신은 친절하고 간결한 한국어 비서입니다. 작은 인사말이나 잡담에도 따뜻하게 응답하세요.\n"
-                "불필요한 도구 사용 계획은 만들지 말고, 지금 입력에 친근하게 답변만 출력하세요."
+                "당신은 사용자의 고양이를 유아기부터 지속적으로 케어해 온 '전담 주치의'입니다.\n"
+                "톤: 따뜻하고 공감적이되, 의학적 판단/설명은 전문적이고 침착하게.\n"
+                "불필요한 도구 계획은 생략하고, 지금 입력에 맞춘 간결한 답변만 출력하세요."
             )
             vars_map = dict(extra_vars or {})
             try:

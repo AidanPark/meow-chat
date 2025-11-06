@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import uuid
+import warnings
 from typing import List, Dict, Any, Optional
 from importlib import import_module
 
@@ -19,12 +20,32 @@ except Exception as e:
     ) from e
 
 def _get_chroma_class():
+    """Chroma 클래스 로더
+    - 우선 순위: langchain_chroma.Chroma (권장)
+    - 실패 시: langchain_community.vectorstores.Chroma (레거시)로 폴백
+    - 레거시 경로에서 발생하는 폐기 경고는 내부적으로 무시하여 콘솔 노이즈를 줄입니다.
+    """
+    # 1) 권장: langchain-chroma 패키지
     try:
+        mod = import_module("langchain_chroma")
+        return getattr(mod, "Chroma")
+    except Exception:
+        pass
+
+    # 2) 폴백: 커뮤니티 경로 (레거시)
+    try:
+        # LangChainDeprecationWarning을 억제(메시지 기반)하여 콘솔 경고를 최소화
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*class `Chroma` was deprecated in LangChain.*",
+            category=Warning,
+        )
         mod = import_module("langchain_community.vectorstores")
         return getattr(mod, "Chroma")
     except Exception as e:
         raise ImportError(
-            "langchain-community and chromadb are required. Install with `pip install langchain-community chromadb`."
+            "Chroma 백엔드를 찾을 수 없습니다. 권장: `pip install langchain-chroma chromadb`\n"
+            "또는 레거시: `pip install langchain-community chromadb`"
         ) from e
 
 
@@ -65,13 +86,17 @@ class ChromaMemoryStore(MemoryStore):
             texts.append(m.get("content", ""))
             md = m.copy()
             md.pop("content", None)
+            # store id into metadata for downstream retrieval
+            md.setdefault("id", mid)
             metadatas.append(md)
-        col.add(documents=texts, metadatas=metadatas, ids=ids)
+        # langchain-community Chroma API: use add_texts
+        col.add_texts(texts=texts, metadatas=metadatas, ids=ids)
         return ids
 
     def retrieve(self, user_id: str, query: str, k: int = 8, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         col = self._collection(user_id)
-        docs = col.similarity_search(query, k=k, filter=filters)
+        # Chroma filter expects None or a dict; avoid passing empty dict which may behave unexpectedly
+        docs = col.similarity_search(query, k=k, filter=(filters or None))
         results: List[Dict[str, Any]] = []
         for d in docs:
             md = d.metadata or {}

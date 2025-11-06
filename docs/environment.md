@@ -30,7 +30,37 @@ pwd
 
 ---
 
-## 📝 파일 구성
+## � 모델 선택 환경변수(중요)
+
+다양한 컴포넌트에서 사용할 OpenAI 모델을 환경변수로 제어할 수 있습니다. 값이 비어있으면 자동으로 OPENAI_DEFAULT_MODEL을 사용합니다.
+
+- OPENAI_DEFAULT_MODEL: 전역 기본값 (예: gpt-4o-mini)
+- FRONTEND_CHAT_STREAM_MODEL: 프론트엔드 채팅 스트리밍용 모델
+- FRONTEND_PREVIEW_MODEL: 프리뷰(개인화 컨텍스트 등) 계산용 모델
+- TEST_MEMORY_FLOW_MODEL: scripts/test_memory_flow.py에서 사용하는 모델
+- LAB_TABLE_EXTRACTOR_MODEL: 백엔드 랩 테이블 추출기(LLM 사용 시) 모델
+- MEOW_LLM_MODEL: 백엔드 공통 기본 모델 (설정 시 일부 서비스의 기본으로 사용)
+
+우선순위 예시(랩 테이블 추출기):
+    전달 인자 → LAB_TABLE_EXTRACTOR_MODEL → MEOW_LLM_MODEL → OPENAI_DEFAULT_MODEL
+
+레포 루트의 .env에 다음 키를 추가해 관리하세요.
+
+```
+OPENAI_DEFAULT_MODEL=gpt-4o-mini
+# 선택적으로 오버라이드 (미설정 시 기본으로 폴백)
+FRONTEND_CHAT_STREAM_MODEL=
+FRONTEND_PREVIEW_MODEL=
+TEST_MEMORY_FLOW_MODEL=
+LAB_TABLE_EXTRACTOR_MODEL=
+MEOW_LLM_MODEL=
+```
+
+OPENAI_API_KEY는 .env 또는 환경변수로 설정되어야 합니다. 실제 키는 커밋하지 마세요.
+
+---
+
+## �📝 파일 구성
 
 ### 1. environment.yml
 이미 생성되어 있는 파일입니다:

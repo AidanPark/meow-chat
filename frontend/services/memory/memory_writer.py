@@ -84,8 +84,42 @@ def extract_candidates(recent_turns: List[MessageTuple], assistant_reply: str, m
     system = {
         "role": "system",
         "content": (
-            "당신은 메모리 추출기입니다. 아래 대화에서 향후 대화에 유용할 사실/결정/선호/제약/할일을\n"
-            "최소 1개, 최대 5개 항목으로 간결하게 추출하세요. 각 항목은 한 줄로 요약합니다."
+            "당신은 메모리 추출기입니다. 아래 대화에서 향후 대화에 유용한 항목을 최소 1개, 최대 5개까지 '한 줄 요약'으로 추출하세요.\n"
+            "대상 카테고리(우선순위: 안전/의료 > 프로필 > 선호/결정/할일):\n"
+            "- profile: 이름, 연령, 성별, 품종, 중성화, 몸무게, 성격 등 기본 프로필\n"
+            "- allergy: 알레르기·과민·부작용 (예: 닭고기 알레르기)\n"
+            "- chronic: 만성질환·진단·병력\n"
+            "- contraindication: 금기·주의\n"
+            "- medication: 약/투약/용량\n"
+            "- diet: 식단·사료·영양제\n"
+            "- preference: 선호/비선호\n"
+            "- constraint: 제약·제한\n"
+            "- decision: 결정/합의\n"
+            "- todo: 해야 할 일\n"
+            "- timeline: 과거 기록/이력\n"
+            "- fact, note: 일반 사실/노트\n\n"
+            "지침:\n"
+            "1) 반려묘의 이름이 언급되면 반드시 '고양이 이름은 {이름}' 형식의 항목을 포함하세요.\n"
+            "2) 각 항목은 카테고리를 암시하는 한국어 키워드를 자연스럽게 포함하세요(예: '알레르기', '중성화', '품종', '성별', '약', '용량', '금기', '선호', '제약', '결정', '해야 할 일', '과거').\n"
+            "3) 불필요한 수식어/이모지/따옴표는 제거하고, 사실만 간결하게 기술하세요.\n"
+            "4) 모호하거나 추측성 내용은 제외하세요.\n\n"
+            "출력 예시(한 줄당 한 항목, 최대 다섯 줄):\n"
+            "- 고양이 이름은 옹심이\n"
+            "- 연령 2살, 성별 암컷\n"
+            "- 품종 러시안블루, 중성화 완료\n"
+            "- 몸무게 4.2kg\n"
+            "- 알레르기: 닭고기\n"
+            "- 만성: 신부전 2단계\n"
+            "- 금기: 초콜릿 섭취 금지\n"
+            "- 약: 아목시실린 50mg 하루 2회\n"
+            "- 식단: 저단백 사료 권장\n"
+            "- 선호: 참치캔 선호\n"
+            "- 제약: 소금기 있는 음식 피하기\n"
+            "- 결정: 다음달 건강검진 예약\n"
+            "- 해야 할 일: 예방접종 일정 확인\n"
+            "- 과거 기록: 2024-06 구토 이력\n"
+            "- 사실: 실내생활만 함\n\n"
+            "주의: 예시는 참고용이며, 실제 출력은 최대 5줄까지만 내세요."
         ),
     }
     user = {
@@ -95,11 +129,11 @@ def extract_candidates(recent_turns: List[MessageTuple], assistant_reply: str, m
             f"대화 로그:\n{turns_block}\n\n최신 응답:\n{assistant_reply}"
         ),
     }
+    out: List[Dict[str, Any]] = []
     try:
         resp = model.invoke([system, user])
         text = getattr(resp, "content", None) or str(resp)
         lines = [ln.strip("- •\t ") for ln in text.splitlines() if ln.strip()]
-        out: List[Dict[str, Any]] = []
         for ln in lines[:5]:
             norm = _normalize_text(ln)
             if not norm:
@@ -110,7 +144,10 @@ def extract_candidates(recent_turns: List[MessageTuple], assistant_reply: str, m
                 "content": norm,
                 "type": t,
                 "importance": imp,
+                "source": "llm",
             })
-        return out
     except Exception:
-        return []
+        # LLM 추출 실패 시 out은 비어 있음(휴리스틱 사용 안 함)
+        pass
+
+    return out

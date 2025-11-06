@@ -89,7 +89,8 @@ def load_config_from_env() -> AppConfig:
     llm_use = _get_bool("MEOW_LLM_USE", False)
     llm_max_concurrency = _get_int("MEOW_LLM_MAX_CONCURRENCY", 2)
     llm_enable_lock = _get_bool("MEOW_LLM_ENABLE_LOCK", True)
-    llm_model = _get_env("MEOW_LLM_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini"
+    # 모델 우선순위: MEOW_LLM_MODEL → OPENAI_DEFAULT_MODEL → 하드코딩 폴백
+    llm_model = _get_env("MEOW_LLM_MODEL", _get_env("OPENAI_DEFAULT_MODEL", "gpt-4.1-mini")) or (_get_env("OPENAI_DEFAULT_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini")
 
     return AppConfig(
         ocr_lang=ocr_lang,
