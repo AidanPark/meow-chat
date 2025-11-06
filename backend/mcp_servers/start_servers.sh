@@ -14,10 +14,10 @@ pkill -f "memory_server.py"
 
 sleep 2
 
-# 실행 환경 체크(선택): 로컬에선 conda 권장, 컨테이너/CI에선 건너뜀
-if [[ -z "$CI" && -z "$DOCKER" ]]; then
+# 실행 환경 체크(선택): 로컬에선 conda 권장, CI에선 건너뜀
+if [[ -z "$CI" ]]; then
     if [[ "$CONDA_DEFAULT_ENV" != "meow-chat" ]]; then
-            echo "ℹ️ conda 환경(meow-chat)이 활성화되어 있지 않습니다. 로컬 환경이라면 'conda activate meow-chat' 후 실행을 권장합니다."
+        echo "ℹ️ conda 환경(meow-chat)이 활성화되어 있지 않습니다. 로컬 환경이라면 'conda activate meow-chat' 후 실행을 권장합니다."
     fi
 fi
 

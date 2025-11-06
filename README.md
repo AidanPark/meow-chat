@@ -3,36 +3,12 @@
 
 ## 🚀 Quick Start
 
-### 권장: Docker로 통합 실행(플랫폼 독립)
-
-Docker를 기본 개발/실행 환경으로 사용합니다(로컬 Conda는 선택사항). Linux/Windows/macOS(특히 Apple Silicon) 모두 동일한 방법으로 구동됩니다.
-
-```bash
-# 표준(Runtime: pip 기반 Dockerfile)
-docker compose up --build -d
-
-# (Apple Silicon 등) OCR 호환성이 더 좋은 Conda 기반 런타임으로 빌드
-docker compose -f docker-compose.yml -f docker-compose.conda.yml up --build -d
-
-# 로그 보기
-docker compose logs -f backend-mcp
-
-# 종료
-docker compose down
-```
-
-컨테이너 내부에서 OCR 확인:
-
-```bash
-docker exec -it meowchat-backend-mcp bash -lc "paddleocr --version || python -c 'import paddleocr; print(\"paddleocr import OK\")'"
-```
-
 프론트엔드 접속: http://localhost:8501
 
 ### 프론트엔드 채팅 (ReAct 전용)
 
 - Streamlit 프론트엔드는 현재 ReAct 전용 모드로 동작하며, 응답을 토큰 단위로 스트리밍합니다.
-- 로컬에서 실행할 경우: `streamlit run frontend/app.py` (백엔드는 Docker 컨테이너에서 실행 중)
+- 로컬에서 실행할 경우: `streamlit run frontend/app.py`
 - 스트리밍 오류 및 중첩된 예외(ExceptionGroup) 상세는 `frontend/logs/streaming.log`에 기록됩니다.
 - MCP 엔드포인트는 `frontend/config/mcp_servers.yml`에서 설정할 수 있습니다. 자세한 내용은 `docs/REACT_MODE.md`를 참고하세요.
 
@@ -47,28 +23,6 @@ docker exec -it meowchat-backend-mcp bash -lc "paddleocr --version || python -c 
 - 설정/데이터/테스트: `backend/config`, `backend/data`, `tests`
 
 Jupyter는 `backend/start_jupyter.sh`로 실행하면 자동으로 `backend` 디렉터리에서 시작됩니다.
-
-### Docker로 MCP 서버 실행
-
-프로젝트 루트에 도커 컴포즈가 추가되었습니다:
-
-```bash
-docker compose up --build -d
-```
-
-포트: 8000(Math) / 8001(Weather) / 8002(Health) / 8003(OCR)
-
-로그 보기:
-
-```bash
-docker compose logs -f backend-mcp
-```
-
-중지:
-
-```bash
-docker compose down
-```
 ```
 
 ### 🔧 라이브러리 문제 해결
@@ -103,9 +57,6 @@ meow-chat/
 │   ├── tests/                    # unit / integration / notebooks
 │   ├── requirements*.txt, environment.yml
 │   ├── start_jupyter.sh          # backend 디렉토리에서 Jupyter 시작
-│   ├── Dockerfile                # pip 기반 이미지(옵션 OCR extras)
-│   └── Dockerfile.conda          # conda 기반 이미지
-├── docker-compose.yml            # 컨테이너 실행 구성(ports, env)
 └── README.md
 ```
 

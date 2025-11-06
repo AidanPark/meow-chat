@@ -26,45 +26,13 @@ bash backend/mcp_servers/start_servers.sh
 ```
 
 Ports: 8000 (math), 8001 (weather), 8002 (health), 8003 (ocr)
-
-## Docker
-
-Build and run all MCP servers with Docker Compose:
-
-```bash
-docker compose up --build -d
-```
-
-Logs:
-
-```bash
-docker compose logs -f backend-mcp
-```
-
-Stop:
-
-```bash
-docker compose down
-```
-
+ 
 ### OCR (OpenCV/PaddleOCR)
 
-OCR is now included by default in the base runtime. The backend image installs required system libraries (libgl1, libglib2.0-0, libxext6, libsm6, libxrender1, libgomp1) and Python dependencies from `backend/requirements.txt` (opencv-python-headless, paddleocr, paddlepaddle for Linux x86_64).
+OCR는 기본 런타임에서 동작합니다. 필요한 시스템 라이브러리와 Python 의존성은 `backend/requirements.txt`에 정의되어 있습니다.
 
-Quick check after build/run:
-
-```bash
-docker compose up --build -d
-docker exec -it meowchat-backend-mcp bash -lc "paddleocr --version || python -c 'import paddleocr; print(\"paddleocr import OK\")'"
-```
-
-If your platform lacks compatible wheels (e.g., Apple Silicon), use the Conda-based image below.
-
-### Conda-based image
-
-An alternative Dockerfile is available at `backend/Dockerfile.conda` which builds a Conda environment from `backend/environment.yml`.
+빠른 점검:
 
 ```bash
-docker build -f backend/Dockerfile.conda -t meowchat-backend-conda .
-docker run --rm -it -p 8000-8003:8000-8003 meowchat-backend-conda
+python -c "import paddleocr; print('paddleocr import OK')"
 ```

@@ -380,7 +380,6 @@ conda env export --no-builds > environment-share.yml
 1. **OCR 기능 테스트**: 노트북에서 이미지 OCR 실행
 2. **API 서버 구축**: FastAPI 엔드포인트 개발
 3. **프론트엔드 연동**: 이미지 업로드 기능 구현
-4. **배포 준비**: Docker 컨테이너 구성
 
 ---
 
