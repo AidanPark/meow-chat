@@ -301,12 +301,29 @@ def stream_react_rag_generator(
             except Exception:
                 tools_used = []
             if isinstance(finish_hint, dict) and (finish_hint.get("use") == "message") and (not tools_used):
+                # finish(message) 경로에서도 스트리밍 체감을 제공하기 위해 메시지를 청크로 나눠 방출
                 if isinstance(final_msg, str) and final_msg.strip():
-                    rec["final_text"] = final_msg
                     try:
-                        token_queue.put(final_msg)
+                        text = final_msg
+                        chunk_size = 24
+                        emitted = []
+                        for i in range(0, len(text), chunk_size):
+                            chunk = text[i:i+chunk_size]
+                            if chunk:
+                                emitted.append(chunk)
+                                rec.setdefault("tokens", []).append(chunk)
+                                try:
+                                    token_queue.put(chunk)
+                                except Exception:
+                                    pass
+                        rec["final_text"] = "".join(emitted) if emitted else text
                     except Exception:
-                        pass
+                        # 실패 시 일괄 출력으로 폴백
+                        rec["final_text"] = final_msg
+                        try:
+                            token_queue.put(final_msg)
+                        except Exception:
+                            pass
                     return
             # 랩리포트 저장 성공 여부 및 요약을 rec로 전달
             try:

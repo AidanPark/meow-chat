@@ -52,6 +52,8 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict, Callable, Awai
 import json as _json
 import logging
 import os
+import time
+import asyncio
 
 try:
     # LangGraph 1.0+ API
@@ -129,6 +131,16 @@ if not _ORCH_LOGGER.handlers:
 
 def _preview_data(data: Any, max_len: int = 1200) -> str:
     """로그에 출력하기 위한 안전한 요약 문자열(최대 길이 제한)을 생성합니다."""
+    # 로그 레벨이 DEBUG가 아니면 간단히 타입만 반환
+    if _ORCH_LOGGER.level > logging.DEBUG:
+        try:
+            if isinstance(data, (dict, list)):
+                return f"<{type(data).__name__} len={len(data)}>"
+            return f"<{type(data).__name__}>"
+        except Exception:
+            return "<data>"
+    
+    # DEBUG 레벨일 때만 전체 직렬화
     try:
         import json as _json
         if isinstance(data, (dict, list, tuple)):
@@ -182,11 +194,25 @@ class MCPToolInvoker:
     """
     client: Any
     _tool_cache: Dict[str, Any] = field(default_factory=dict)
+    _tools_list_cache: Optional[List[Any]] = field(default=None)
+    _tools_list_cache_time: float = field(default=0.0)
+    _tools_list_ttl: float = field(default=60.0)  # 60초 TTL
+
+    async def get_all_tools(self) -> List[Any]:
+        """도구 목록을 TTL 캐시와 함께 반환합니다."""
+        now = time.time()
+        if self._tools_list_cache is not None and (now - self._tools_list_cache_time) < self._tools_list_ttl:
+            return self._tools_list_cache
+        
+        tools = await self.client.get_tools()
+        self._tools_list_cache = tools
+        self._tools_list_cache_time = now
+        return tools
 
     async def get(self, name: str) -> Any:
         if name in self._tool_cache:
             return self._tool_cache[name]
-        tools = await self.client.get_tools()
+        tools = await self.get_all_tools()
         for t in tools:
             if getattr(t, "name", None) == name:
                 self._tool_cache[name] = t
@@ -441,9 +467,12 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
     history = state.get("react_history") or []
     iter_no = int(state.get("react_iteration") or 0)
 
+    # invoker 생성 (캐시된 도구 목록 사용)
+    invoker = MCPToolInvoker(client)
+
     # 간단한 도구 목록 추출(이름만)
     try:
-        tools = await client.get_tools()
+        tools = await invoker.get_all_tools()  # 캐시된 도구 목록 사용
         available = []
         # MCP tools
         for t in tools:
@@ -453,16 +482,17 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
             if allowed and name not in allowed:
                 continue
             desc = getattr(t, "description", None)
-            if isinstance(desc, str) and len(desc) > 260:
-                desc = desc[:260] + "…"
+            # 설명 길이 축소: 260자 → 160자
+            if isinstance(desc, str) and len(desc) > 160:
+                desc = desc[:160] + "…"
             available.append({"name": name, "desc": desc or ""})
         # Local tools
         for lt in _build_local_tools(client):
             if allowed and lt.name not in allowed:
                 continue
             d = lt.description
-            if isinstance(d, str) and len(d) > 260:
-                d = d[:260] + "…"
+            if isinstance(d, str) and len(d) > 160:
+                d = d[:160] + "…"
             available.append({"name": lt.name, "desc": d or ""})
     except Exception:
         available = [{"name": n, "desc": ""} for n in (allowed or [])]
@@ -500,10 +530,10 @@ async def react_plan_node(state: OrchestratorState, model, client) -> Orchestrat
     except Exception:
         vars_preview = str(list(vars_map.keys())[:8])
 
-    # 도구 카탈로그(이름 + 간단 설명) 제공
+    # 도구 카탈로그(이름 + 간단 설명) 제공 - Top-12로 제한
     tool_lines = []
     try:
-        for a in (available or [])[:24]:
+        for a in (available or [])[:12]:
             nm = a.get("name")
             ds = a.get("desc") or ""
             if nm:
@@ -801,25 +831,29 @@ async def react_execute_node(state: OrchestratorState, client) -> OrchestratorSt
                                 "lab_report_json": _json.dumps(merged, ensure_ascii=False),
                                 "format": "LabReport.data",
                             }
-                            # 저장 시도 (중복/예외 여부와 상관없이 UI 초기화를 위해 성공 플래그는 설정)
-                            ids: List[str] = []
-                            if write_memories:
+                            
+                            # 비동기 태스크로 메모리 저장 (블로킹 제거)
+                            async def _save_memory_async():
+                                ids: List[str] = []
+                                if write_memories:
+                                    try:
+                                        ids = write_memories(user_id=user_id, memories=[md])
+                                    except Exception:
+                                        pass
                                 try:
-                                    ids = write_memories(user_id=user_id, memories=[md])
+                                    vars_map["_lab_report_saved"] = True
+                                    vars_map["_lab_report_saved_summary"] = {
+                                        "type": "lab_report",
+                                        "dates": dates,
+                                        "row_count": total_rows,
+                                        "hospital_names": hosps,
+                                        "ids": ids,
+                                    }
                                 except Exception:
-                                    # 저장 실패는 극히 예외적인 케이스로 간주
                                     pass
-                            try:
-                                vars_map["_lab_report_saved"] = True
-                                vars_map["_lab_report_saved_summary"] = {
-                                    "type": "lab_report",
-                                    "dates": dates,
-                                    "row_count": total_rows,
-                                    "hospital_names": hosps,
-                                    "ids": ids,
-                                }
-                            except Exception:
-                                pass
+                            
+                            # 백그라운드에서 실행 (await 하지 않음)
+                            asyncio.create_task(_save_memory_async())
             except Exception:
                 # 메모리 저장 실패는 흐름에 영향 주지 않음
                 pass
@@ -862,20 +896,35 @@ async def react_self_eval_node(state: OrchestratorState, model) -> OrchestratorS
     iter_no = int(state.get("react_iteration") or 0)
     max_iters = int(state.get("react_max_iters") or 4)
 
-    # 반복 한계 시 종료
+    # 규칙 기반 조기 종료 (LLM 호출 생략)
+    # 1. 반복 한계 도달
     if iter_no + 1 >= max_iters:
         state["react_should_continue"] = False
-        return state
-
-    # 이미 plan 단계에서 finish를 제안한 경우 우선 종료
-    if finish_hint:
-        state["react_should_continue"] = False
         try:
-            _ORCH_LOGGER.info("[SELF-EVAL] finish-hint present → stopping")
+            _ORCH_LOGGER.info("[SELF-EVAL] max iterations reached → stopping (rule-based)")
         except Exception:
             pass
         return state
 
+    # 2. Plan 단계에서 finish 힌트가 있는 경우
+    if finish_hint:
+        state["react_should_continue"] = False
+        try:
+            _ORCH_LOGGER.info("[SELF-EVAL] finish-hint present → stopping (rule-based)")
+        except Exception:
+            pass
+        return state
+
+    # 3. 최근 실행이 실패한 경우 조기 종료
+    if history and isinstance(history[-1], dict) and not history[-1].get("ok", False):
+        state["react_should_continue"] = False
+        try:
+            _ORCH_LOGGER.info("[SELF-EVAL] last execution failed → stopping (rule-based)")
+        except Exception:
+            pass
+        return state
+
+    # LLM 기반 평가 (필요한 경우만)
     sys_prompt = (
         "당신은 품질 심사(Self-eval)자입니다. 최근 관찰까지 고려했을 때, 요청을 만족했는지 판단하세요.\n"
         "JSON만 출력하세요. 형식: {\"continue\": true|false}"
@@ -894,7 +943,7 @@ async def react_self_eval_node(state: OrchestratorState, model) -> OrchestratorS
         cont = bool(data.get("continue", False))
         state["react_should_continue"] = cont
         try:
-            _ORCH_LOGGER.info("[SELF-EVAL] continue=%s | iter=%s/%s | history_len=%s", cont, iter_no, max_iters, len(history))
+            _ORCH_LOGGER.info("[SELF-EVAL] continue=%s | iter=%s/%s | history_len=%s (LLM-based)", cont, iter_no, max_iters, len(history))
         except Exception:
             pass
     except Exception as e:
