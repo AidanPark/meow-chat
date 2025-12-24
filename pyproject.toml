@@ -1,0 +1,85 @@
+[tool.poetry]
+name = "meow-chat"
+version = "0.1.0"
+description = "고양이 건강검진 OCR 챗봇 MVP - 검진 결과지를 분석하고 건강 상담을 제공하는 AI 서비스"
+authors = ["Aidan <aidan@example.com>"]
+readme = "README.md"
+license = "MIT"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+streamlit = "^1.28"
+google-cloud-vision = "^3.0"
+openai = "^1.0"
+anthropic = "^0.20"
+pillow = "^10.0"
+python-dotenv = "^1.0"
+pydantic = "^2.0"
+pydantic-settings = "^2.0"
+pdf2image = "^1.16"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0"
+pytest-asyncio = "^0.21"
+pytest-cov = "^4.1"
+ruff = "^0.1"
+mypy = "^1.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # function calls in argument defaults
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "google.cloud.*",
+    "streamlit.*",
+    "pdf2image.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--verbose",
+    "--color=yes",
+    "--tb=short",
+]
+

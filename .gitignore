@@ -27,6 +27,11 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv/
+
+# Poetry
+poetry.lock
+.poetry/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -37,8 +42,19 @@ venv.bak/
 # pipenv
 Pipfile.lock
 
+# Poetry
+poetry.lock
+.poetry/
+
 # Environment variables
-.venv
+.env
+.env.local
+.env.*.local
+
+# API Credentials (Google Cloud, etc.)
+.credentials/
+*.json
+!pyproject.toml
 
 # IDE
 .vscode/
