@@ -35,6 +35,7 @@ poetry.lock
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb_checkpoints/
 
 # pyenv
 .python-version
@@ -75,8 +76,31 @@ Thumbs.db
 # Logs
 *.log
 
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Test fixtures (실제 OCR 테스트용 이미지 - 개인정보 보호)
+tests/fixtures/images/*.jpg
+tests/fixtures/images/*.jpeg
+tests/fixtures/images/*.png
+tests/fixtures/images/*.gif
+tests/fixtures/images/*.bmp
+tests/fixtures/images/*.pdf
+!tests/fixtures/images/.gitkeep
+!tests/fixtures/images/README.md
+
 # Project-specific: exclude OCR outputs
 notebooks/ocr/result/
+notebooks/**/result/
+notebooks/**/*.jpg
+notebooks/**/*.jpeg
+notebooks/**/*.png
+notebooks/**/*.pdf
+!notebooks/**/*.ipynb
+!notebooks/**/README.md
 
 # Frontend user uploads (exclude binary uploads from version control)
 frontend/uploads/*

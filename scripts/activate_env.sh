@@ -13,9 +13,11 @@ if [ -f "$VENV_ACTIVATE" ]; then
     echo "🐍 Python: $(python --version)"
     echo ""
     echo "사용 가능한 명령어:"
-    echo "  streamlit run app/Home.py  - 앱 실행"
-    echo "  pytest                      - 테스트 실행"
-    echo "  deactivate                  - 가상환경 나가기"
+    echo "  streamlit run app/Home.py       - 앱 실행"
+    echo "  pytest                          - 테스트 실행"
+    echo "  jupyter notebook                - Jupyter 노트북 실행"
+    echo "  cd notebooks && jupyter notebook - 노트북 디렉토리에서 실행"
+    echo "  deactivate                      - 가상환경 나가기"
 else
     echo "❌ 가상환경을 찾을 수 없습니다: $VENV_ACTIVATE"
     exit 1

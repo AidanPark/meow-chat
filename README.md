@@ -407,6 +407,28 @@
 
 ---
 
+## 📚 개발 문서
+
+프로젝트 개발을 위한 주요 문서:
+
+- **[docs/PYCHARM_GUIDE.md](./docs/PYCHARM_GUIDE.md)** - PyCharm 설정 가이드 ⭐
+  - Safe mode 해결 방법
+  - Python 인터프리터 설정
+  - Jupyter 설정
+- **[docs/PYCHARM_SAFE_MODE_TROUBLESHOOTING.md](./docs/PYCHARM_SAFE_MODE_TROUBLESHOOTING.md)** - Safe mode 트러블슈팅
+  - Trust 버튼 눌러도 해결 안 될 때
+  - WSL 환경 문제 해결
+- **[docs/TEST_GUIDE.md](./docs/TEST_GUIDE.md)** - 테스트 실행 완벽 가이드
+  - Pytest Fixture 이해하기
+  - 모든 테스트 파일 상세 설명
+  - 실행 방법 및 트러블슈팅
+- **[docs/QUICKSTART.md](./docs/QUICKSTART.md)** - 빠른 시작 가이드
+- **[docs/API_KEYS_SETUP.md](./docs/API_KEYS_SETUP.md)** - API 키 설정 방법
+- **[notebooks/README.md](./notebooks/README.md)** - Jupyter 노트북 가이드
+- **[docs/README.md](./docs/README.md)** - 프로젝트 상세 설명
+
+---
+
 ## 📞 Contact
 
 **프로젝트**: 냥닥터 (NyangDoctor)  

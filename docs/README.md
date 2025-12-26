@@ -169,6 +169,21 @@
 
 ---
 
+## 📚 문서 가이드
+
+프로젝트의 주요 문서들:
+
+- **[TEST_GUIDE.md](./TEST_GUIDE.md)** - 테스트 실행 완벽 가이드
+  - Pytest Fixture 이해하기
+  - 테스트 실행 방법
+  - 테스트 파일별 상세 설명
+  - 트러블슈팅
+- **[QUICKSTART.md](./QUICKSTART.md)** - 빠른 시작 가이드
+- **[API_KEYS_SETUP.md](./API_KEYS_SETUP.md)** - API 키 설정 방법
+- **[plan.md](./plan.md)** - 프로젝트 계획
+
+---
+
 ## 📌 요약
 
 - 본 프로젝트는 **고양이의 생애주기와 함께하는 주치의+반려묘 페르소나 챗봇**이라는 차별적 컨셉을 가짐.  

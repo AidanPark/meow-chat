@@ -48,7 +48,10 @@ def test_resize_image():
     # 비율 유지하면서 리사이즈
     assert resized.width <= 1000
     assert resized.height <= 1000
-    assert resized.width / resized.height == img.width / img.height
+    # 부동소수점 오차를 고려하여 비율이 거의 같은지 확인
+    original_ratio = img.width / img.height
+    resized_ratio = resized.width / resized.height
+    assert abs(original_ratio - resized_ratio) < 0.01
 
 
 def test_resize_image_no_change():

@@ -45,12 +45,33 @@ class GoogleVisionOCR(BaseOCRService):
         full_text = texts[0].description
         confidence = None  # Google Vision은 전체 신뢰도를 제공하지 않음
 
+        # 상세 텍스트 블록 정보 (바운딩 박스 포함)
+        text_blocks = []
+        for i, text in enumerate(texts[1:], 1):  # 첫 번째는 전체 텍스트이므로 제외
+            vertices = text.bounding_poly.vertices
+            text_blocks.append({
+                "text": text.description,
+                "bounds": {
+                    "x_min": min(v.x for v in vertices),
+                    "y_min": min(v.y for v in vertices),
+                    "x_max": max(v.x for v in vertices),
+                    "y_max": max(v.y for v in vertices),
+                }
+            })
+
         return OCRResult(
             text=full_text,
             confidence=confidence,
             metadata={
                 "source": "google_vision",
                 "num_blocks": len(texts) - 1,  # 첫 번째는 전체 텍스트
+                "text_blocks": text_blocks[:10],  # 처음 10개만 저장 (너무 많으면 출력이 길어짐)
+                "full_bounds": {
+                    "x_min": min(v.x for v in texts[0].bounding_poly.vertices),
+                    "y_min": min(v.y for v in texts[0].bounding_poly.vertices),
+                    "x_max": max(v.x for v in texts[0].bounding_poly.vertices),
+                    "y_max": max(v.y for v in texts[0].bounding_poly.vertices),
+                } if texts else None,
             },
         )
 
