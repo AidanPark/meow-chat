@@ -6,7 +6,7 @@ from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # .env 파일 로드
 load_dotenv()
@@ -19,8 +19,11 @@ class Settings(BaseSettings):
     """애플리케이션 설정"""
 
     # OCR 설정
-    ocr_provider: Literal["google", "dummy"] = Field(
-        default="google", description="OCR 제공자 (google | dummy)"
+    ocr_provider: Literal["google", "easyocr", "paddle", "dummy"] = Field(
+        default="easyocr", description="OCR 제공자 (google | easyocr | paddle | dummy)"
+    )
+    ocr_use_gpu: bool = Field(
+        default=False, description="OCR GPU 사용 여부 (Paddle/EasyOCR)"
     )
     google_application_credentials: str | None = Field(
         default=None, description="Google Cloud 서비스 계정 JSON 경로"
@@ -44,10 +47,11 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="로그 레벨")
     max_upload_size_mb: int = Field(default=10, description="최대 업로드 크기 (MB)")
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
 
 
 # 전역 설정 인스턴스

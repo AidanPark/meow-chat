@@ -2,20 +2,21 @@
 
 from PIL import Image
 
-from .base import BaseOCRService, OCRResult
+from src.models.envelopes import OCRData, OCRItem, OCRMeta, OCRResultEnvelope
+from .base import BaseOCRService
 
 
 class DummyOCR(BaseOCRService):
     """테스트용 더미 OCR 서비스"""
 
-    def extract_text(self, image: Image.Image) -> OCRResult:
+    def extract_text(self, image: Image.Image) -> OCRResultEnvelope:
         """더미 텍스트 반환
 
         Args:
             image: PIL Image 객체
 
         Returns:
-            OCRResult 객체
+            OCRResultEnvelope 객체
         """
         dummy_text = """
 [더미 OCR 결과]
@@ -47,9 +48,20 @@ class DummyOCR(BaseOCRService):
 검진 날짜: 2024-12-20
 """.strip()
 
-        return OCRResult(
-            text=dummy_text,
-            confidence=1.0,
-            metadata={"source": "dummy", "image_size": image.size},
+        # 단순 텍스트만 - 상세 위치 정보 없음
+        item = OCRItem(
+            rec_texts=[dummy_text],
+            rec_scores=[1.0],
+            dt_polys=[],  # 더미는 위치 정보 없음
         )
 
+        return OCRResultEnvelope(
+            stage='ocr',
+            data=OCRData(items=[item]),
+            meta=OCRMeta(
+                items=1,
+                source='nparray',
+                lang='korean',
+                engine='DummyOCR'
+            )
+        )

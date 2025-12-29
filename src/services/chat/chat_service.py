@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from PIL import Image
 
+from src.models.envelopes import OCRResultEnvelope
 from src.services.llm.base import BaseLLMService, Message
 from src.services.llm.prompts import (
     SYSTEM_PROMPT,
@@ -11,6 +12,25 @@ from src.services.llm.prompts import (
     get_ocr_analysis_prompt,
 )
 from src.services.ocr.base import BaseOCRService
+
+
+def extract_text_from_envelope(envelope: OCRResultEnvelope) -> str:
+    """OCRResultEnvelope에서 전체 텍스트 추출
+
+    Args:
+        envelope: OCR 결과 Envelope
+
+    Returns:
+        전체 텍스트 (줄바꿈으로 연결)
+    """
+    if not envelope.data.items:
+        return ""
+
+    all_texts = []
+    for item in envelope.data.items:
+        all_texts.extend(item.rec_texts)
+
+    return "\n".join(all_texts)
 
 
 @dataclass
@@ -47,7 +67,7 @@ class ChatService:
         """
         # 1. OCR로 텍스트 추출
         ocr_result = self.ocr_service.extract_text(image)
-        self.ocr_text = ocr_result.text
+        self.ocr_text = extract_text_from_envelope(ocr_result)
 
         # 2. LLM으로 분석
         analysis_prompt = get_ocr_analysis_prompt(self.ocr_text)
@@ -80,7 +100,7 @@ class ChatService:
         # 1. OCR로 모든 페이지 텍스트 추출
         ocr_results = self.ocr_service.extract_text_from_images(images)
         combined_text = "\n\n=== 다음 페이지 ===\n\n".join(
-            [result.text for result in ocr_results]
+            [extract_text_from_envelope(result) for result in ocr_results]
         )
         self.ocr_text = combined_text
 

@@ -1,0 +1,43 @@
+=== Output for 20241121_0.png ===
+Original image: /home/aidan/projects/meow-chat/notebooks/ocr/assets/images/20241121_0.png
+Generated on: 2025-12-29 22:30:29 (Processing time: 00:17.58)
+
+🧾 Step 12: 포함/제외 tests 전체 (라인 순)
+code             |   value | value_conf | unit    | reference_min | reference_max | drop_reason   
+-----------------+---------+------------+---------+---------------+---------------+---------------
+SODIUM           | UNKNOWN |     0.0500 | mEal    |         147.0 |         156.0 | unknown_value 
+POTASSIUM        | UNKNOWN |     0.0500 | UNKNOWN |           3.4 |           4.6 | unknown_value 
+CHLORIDE         | UNKNOWN |     0.0500 | mEal    |         107.0 |         120.0 | unknown_value 
+T.Protein        | UNKNOWN |     0.9982 | aldL    |           5.7 |           7.8 | unknown_value 
+Globulin         |     3.2 |     0.9835 | gldL    |           2.7 |           5.2 | low_confidence
+BUN              | UNKNOWN |     0.0500 | mgld    |          17.6 |          32.8 | unknown_value 
+IP               | UNKNOWN |     0.0500 | mgld    |           2.6 |           6.0 | unknown_value 
+Glucose          | UNKNOWN |     0.0500 | mgld    |          71.0 |         148.0 | unknown_value 
+ALP              | UNKNOWN |     0.0500 | UNKNOWN |          77.0 |         358.0 | unknown_value 
+GGT              | UNKNOWN |     0.0500 | UIL     |           1.0 |          10.0 | unknown_value 
+T.Bilirubin      |     0.0 |     0.9999 | mgld    |       UNKNOWN |       UNKNOWN | low_confidence
+Triglyceride(TG) | UNKNOWN |     0.0500 | mgld    |          17.0 |         104.0 | unknown_value 
+T.cholesterol    | UNKNOWN |     0.0500 | mgld    |       UNKNOWN |       UNKNOWN | unknown_value 
+Ca               | UNKNOWN |     0.0500 | mgld    |           8.8 |          11.9 | unknown_value 
+Mg               | UNKNOWN |     0.0500 | mgld    |           1.8 |           2.7 | unknown_value 
+CK               | UNKNOWN |     0.0500 | UIL     |          87.0 |         309.0 | unknown_value 
+NH3              | UNKNOWN |     0.0500 | rngld   |          23.0 |          78.0 | unknown_value 
+Lipase           | UNKNOWN |     0.0500 | UIL     |       UNKNOWN |       UNKNOWN | unknown_value 
+Amylase          | UNKNOWN |     0.0500 | U/L     |         200.0 |        1900.0 | unknown_value 
+CRP              | UNKNOWN |     0.0500 | mgld    |       UNKNOWN |       UNKNOWN | unknown_value 
+SAA-Vcheck       | UNKNOWN |     0.0500 | UNKNOWN |           0.0 |           5.0 | unknown_value 
+ALB/GLOB         |     0.9 |     0.7291 | UNKNOWN |           0.6 |           1.1 | low_confidence
+BUN/CRE          | UNKNOWN |     0.0500 | UNKNOWN |          17.5 |          21.9 | unknown_value 
+ANIONGAP         | UNKNOWN |     0.0500 | UNKNOWN |       UNKNOWN |       UNKNOWN | unknown_value 
+WBC              |    17.3 |     0.9992 | KluL    |           6.3 |          19.6 | low_confidence
+LYMPH            |     9.2 |     0.9963 | K/µL    |           2.0 |           7.2 | low_confidence
+MON              | UNKNOWN |     0.0500 | kluL    |           0.0 |           1.0 | unknown_value 
+GRAN             | UNKNOWN |     0.9585 | UNKNOWN |           5.0 |          20.0 | unknown_value 
+EOS              | UNKNOWN |     0.0500 | kul     |           0.3 |           1.7 | unknown_value 
+LYMPHO           | UNKNOWN |     0.0500 | %       |          20.0 |          61.2 | unknown_value 
+RBC              |    3.28 |     0.9800 | M/µL    |           6.0 |          10.1 | low_confidence
+HGB              |     3.9 |     0.6882 | UNKNOWN |           8.1 |          14.2 | low_confidence
+HCT              | UNKNOWN |     0.6823 | %       |          27.7 |          46.8 | unknown_value
+
+🧾 Step 13: 최종 테이블
+ℹ️ final_doc.tests 비어있음 (Step 13 미실행 또는 이전 단계 결과 없음)

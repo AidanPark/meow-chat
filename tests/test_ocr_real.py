@@ -17,7 +17,7 @@ import io
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
-from src.services.ocr.google_vision import GoogleVisionOCR
+from src.services.ocr.google_vision_ocr import GoogleVisionOCR
 
 
 @pytest.fixture

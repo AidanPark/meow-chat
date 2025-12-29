@@ -9,7 +9,7 @@ from PIL import Image
 
 from src.services.chat.chat_service import ChatService
 from src.services.llm.dummy_llm import DummyLLM
-from src.services.ocr.dummy import DummyOCR
+from src.services.ocr.dummy_ocr import DummyOCR
 
 # 프로젝트 루트의 .env 파일 로드
 env_path = Path(__file__).parent.parent / ".env"
