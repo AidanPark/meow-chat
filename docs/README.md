@@ -179,7 +179,6 @@
   - 테스트 파일별 상세 설명
   - 트러블슈팅
 - **[QUICKSTART.md](./QUICKSTART.md)** - 빠른 시작 가이드
-- **[API_KEYS_SETUP.md](./API_KEYS_SETUP.md)** - API 키 설정 방법
 - **[plan.md](./plan.md)** - 프로젝트 계획
 
 ---

@@ -8,7 +8,7 @@ license = "MIT"
 packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.12"
 # PaddleOCR 스택 (이전 프로젝트 검증된 버전)
 numpy = ">=1.26.4,<2.0"
 paddlepaddle = ">=2.6.0"
@@ -21,7 +21,7 @@ albumentations = ">=1.3.1"
 # 기존 의존성
 streamlit = "^1.28"
 google-cloud-vision = "^3.0"
-openai = "^1.0"
+openai = "^2.14.0"
 anthropic = "^0.20"
 pillow = "10.4.0"
 python-dotenv = "^1.0"
@@ -47,7 +47,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [

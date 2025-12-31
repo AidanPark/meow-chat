@@ -1,6 +1,7 @@
 """채팅 서비스 - OCR과 LLM을 연결하는 오케스트레이션"""
 
 from dataclasses import dataclass
+from typing import Iterator
 
 from PIL import Image
 
@@ -158,6 +159,45 @@ class ChatService:
         )
 
         return response.content
+
+    def stream_chat(self, user_message: str) -> Iterator[str]:
+        """사용자 질문에 대한 응답 생성 (스트리밍)
+
+        Args:
+            user_message: 사용자 메시지
+
+        Yields:
+            AI 응답 텍스트 조각
+        """
+        # 대화 히스토리 구성
+        conversation_text = "\n\n".join(
+            [f"[{msg.role}]: {msg.content}" for msg in self.conversation_history[-5:]]
+        )
+
+        # OCR 텍스트가 있으면 컨텍스트에 포함
+        if self.ocr_text:
+            conversation_text = f"[검진 결과지 내용]\n{self.ocr_text[:500]}...\n\n{conversation_text}"
+
+        # 프롬프트 생성
+        prompt = get_followup_prompt(conversation_text, user_message)
+        messages = [
+            Message(role="system", content=SYSTEM_PROMPT),
+            Message(role="user", content=prompt),
+        ]
+
+        # 사용자 메시지를 히스토리에 먼저 추가
+        self.conversation_history.append(ChatMessage(role="user", content=user_message))
+
+        # LLM 스트리밍 호출 - 텍스트 조각을 수집하면서 yield
+        full_response = ""
+        for chunk in self.llm_service.stream_generate(messages, temperature=0.7):
+            full_response += chunk
+            yield chunk
+
+        # 스트리밍 완료 후 최종 응답을 히스토리에 추가
+        self.conversation_history.append(
+            ChatMessage(role="assistant", content=full_response)
+        )
 
     def get_history(self) -> list[ChatMessage]:
         """대화 히스토리 반환"""
