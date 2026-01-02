@@ -1,18 +1,16 @@
 """냥닥터 (Meow Chat) - 고양이 건강검진 OCR 챗봇
 
-메인 Streamlit 애플리케이션 - Step 5: 스몰톡 + 단기 메모리 + 의도분석 + OCR + 검사 분석
-st.write_stream()을 사용한 스트리밍 채팅 인터페이스입니다.
-이전 대화 히스토리를 모델에 전달하여 멀티턴 대화를 지원합니다.
-사용자 입력에서 '검사 분석 요청' 의도를 감지하여 확인 메시지를 출력합니다.
-검진 결과지 이미지를 업로드하면 OCR로 텍스트를 추출하고 구조화된 테이블로 표시합니다.
-문서 컨텍스트를 기반으로 LLM이 맞춤형 건강 상담을 제공합니다.
+메인 Streamlit 애플리케이션 - Step 4.5(A): form 기반 단일 Send 플로우
+- 파일 업로드 + 질문 입력 → Send 한 번으로 OCR → 답변 생성
+- 채팅 히스토리 누적, 세션 상태 관리
+- 에러/가이드 UX 포함
 """
 
+import hashlib
 import sys
 from pathlib import Path
 
 import streamlit as st
-import pandas as pd
 
 # src 모듈 임포트를 위한 경로 추가
 ROOT_DIR = Path(__file__).parent.parent
@@ -23,6 +21,7 @@ from src.services.llm.factory import get_llm_service
 from src.services.ocr.factory import get_ocr_service
 from src.services.lab_extraction import LabTableExtractor
 from src.services.lab_extraction.line_preprocessor import LinePreprocessor
+from src.services.orchestration import Router, OrchestrationContext
 from src.settings import settings
 from src.utils.images import load_image_from_bytes, resize_image
 from src.utils.pdf import is_pdf, pdf_bytes_to_images
@@ -55,6 +54,13 @@ def init_session_state():
         except Exception as e:
             st.session_state.llm_service = None
             st.session_state.llm_error = str(e)
+
+    # 오케스트레이션 Router 초기화
+    if "router" not in st.session_state:
+        if st.session_state.llm_service:
+            st.session_state.router = Router(st.session_state.llm_service)
+        else:
+            st.session_state.router = None
 
     if "ocr_service" not in st.session_state:
         try:
@@ -95,6 +101,13 @@ def init_session_state():
 
     if "uploaded_image" not in st.session_state:
         st.session_state.uploaded_image = None
+
+    # Step 4.5: 파일 캐싱용 키 및 정보 (캐시 키 = file_hash:provider)
+    if "last_ocr_cache_key" not in st.session_state:
+        st.session_state.last_ocr_cache_key = None
+
+    if "last_file_name" not in st.session_state:
+        st.session_state.last_file_name = None
 
 
 def display_chat_history():
@@ -185,7 +198,9 @@ def process_ocr_result(ocr_result) -> tuple:
     Returns:
         (structured_data: dict, debug_output: str, raw_text: str)
     """
+    print(f"[DEBUG] process_ocr_result: ocr_result={ocr_result}")
     if not ocr_result or not ocr_result.data or not ocr_result.data.items:
+        print("[DEBUG] OCR 결과가 비어있음")
         return None, None, ""
 
     # 원본 텍스트 추출
@@ -193,6 +208,7 @@ def process_ocr_result(ocr_result) -> tuple:
     for item in ocr_result.data.items:
         all_texts.extend(item.rec_texts)
     raw_text = "\n".join(all_texts)
+    print(f"[DEBUG] 추출된 텍스트 라인 수: {len(all_texts)}")
 
     # LinePreprocessor와 LabTableExtractor가 없으면 텍스트만 반환
     if st.session_state.line_preprocessor is None or st.session_state.lab_extractor is None:
@@ -259,23 +275,58 @@ def display_structured_result(structured_data: dict, debug_output: str):
         st.info("추출된 검사 항목이 없습니다.")
 
 
-def handle_image_upload(uploaded_file):
-    """이미지 업로드 처리 및 OCR 실행
+def compute_file_hash(file_bytes: bytes) -> str:
+    """파일 bytes의 SHA256 해시 계산
+
+    Args:
+        file_bytes: 파일 바이트 데이터
+
+    Returns:
+        SHA256 해시 문자열
+    """
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
+def compute_ocr_cache_key(file_bytes: bytes) -> str:
+    """OCR 캐시 키 생성 (파일해시 + provider)
+
+    Args:
+        file_bytes: 파일 바이트 데이터
+
+    Returns:
+        캐시 키 문자열 (file_hash:provider 형태)
+    """
+    file_hash = compute_file_hash(file_bytes)
+    provider = settings.ocr_provider
+    return f"{file_hash}:{provider}"
+
+
+def handle_image_upload(uploaded_file, force_rerun: bool = False) -> tuple[bool, str, bool]:
+    """이미지 업로드 처리 및 OCR 실행 (캐싱 지원)
 
     Args:
         uploaded_file: Streamlit UploadedFile 객체
+        force_rerun: 캐시를 무시하고 재실행할지 여부
+
+    Returns:
+        (success: bool, message: str, cache_hit: bool)
     """
     if st.session_state.ocr_service is None:
-        st.error("⚠️ OCR 서비스를 사용할 수 없습니다.")
-        return False
+        return False, "⚠️ OCR 서비스를 사용할 수 없습니다.", False
 
     try:
         file_bytes = uploaded_file.read()
+        cache_key = compute_ocr_cache_key(file_bytes)
+
+        # 캐싱: 동일 파일+provider이면 OCR 건너뛰기 (force_rerun이 아닐 때)
+        if not force_rerun and cache_key == st.session_state.last_ocr_cache_key:
+            return True, "✅ 캐시 사용: 이전 OCR 결과를 재사용합니다.", True
 
         # PDF 또는 이미지 처리
         if is_pdf(uploaded_file.name):
             images = pdf_bytes_to_images(file_bytes, dpi=300)
             st.session_state.uploaded_image = images[0]  # 첫 페이지 표시용
+            print(f"[DEBUG] PDF 변환: 첫 페이지 크기={images[0].size}, 모드={images[0].mode}")
 
             # 첫 페이지만 OCR (Step 4 MVP)
             ocr_result = st.session_state.ocr_service.extract_text(images[0])
@@ -283,6 +334,7 @@ def handle_image_upload(uploaded_file):
             image = load_image_from_bytes(file_bytes)
             image = resize_image(image, max_width=2048, max_height=2048)
             st.session_state.uploaded_image = image
+            print(f"[DEBUG] 이미지 로드: 크기={image.size}, 모드={image.mode}")
 
             # OCR 실행
             ocr_result = st.session_state.ocr_service.extract_text(image)
@@ -293,10 +345,17 @@ def handle_image_upload(uploaded_file):
         st.session_state.ocr_debug_output = debug_output
         st.session_state.ocr_text = raw_text
 
-        return True
+        # 캐싱용 정보 저장 (cache_key = file_hash:provider)
+        st.session_state.last_ocr_cache_key = cache_key
+        st.session_state.last_file_name = uploaded_file.name
+
+        # OCR 품질 체크
+        if not raw_text or len(raw_text.strip()) < 20:
+            return True, "⚠️ OCR 결과가 부족합니다. 이미지가 흐리거나 잘렸을 수 있어요.", False
+
+        return True, "✅ OCR 완료!", False
     except Exception as e:
-        st.error(f"⚠️ 이미지 처리 중 오류: {str(e)}")
-        return False
+        return False, f"⚠️ 이미지 처리 중 오류: {str(e)}", False
 
 
 def build_messages_for_llm(user_input: str, include_document_context: bool = False) -> list[Message]:
@@ -382,41 +441,20 @@ def format_document_context() -> str:
 
 
 def handle_user_input(user_input: str):
-    """사용자 입력 처리 및 스트리밍 응답 생성 (멀티턴 + 의도분석 + 문서분석)"""
+    """사용자 입력 처리 및 스트리밍 응답 생성 (오케스트레이션 기반)
+
+    오케스트레이션 파이프라인:
+    1. IntentClassifier로 의도 분류 (gpt-5-nano 등 경량 모델)
+    2. Router가 의도/문서유무/세션상태 기반으로 라우팅 결정
+    3. 적절한 Responder가 응답 생성 (스몰톡=gpt-5-mini, 분석=gpt-4.1)
+    """
     # 사용자 메시지 표시 및 저장
     with st.chat_message("user"):
         st.markdown(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
 
-    # Step 3 + Step 5: 분석 의도 감지
-    if detect_analysis_intent(user_input):
-        # Step 5: 문서가 업로드되어 있으면 바로 분석 응답 생성
-        # ocr_structured에 tests가 있거나, ocr_text가 있으면 문서가 있는 것으로 판단
-        has_document = (
-            (st.session_state.ocr_structured and st.session_state.ocr_structured.get("tests"))
-            or st.session_state.ocr_text
-        )
-
-        if has_document:
-            # 문서 컨텍스트 포함하여 LLM 호출
-            handle_analysis_response(user_input)
-            return
-        else:
-            # 문서가 없으면 업로드 안내
-            with st.chat_message("assistant"):
-                confirm_msg = (
-                    "🔍 **검사 결과 분석 의도가 감지되었습니다!**\n\n"
-                    "검진 결과지를 분석해 드릴 수 있어요. "
-                    "사이드바에서 결과지 이미지를 업로드해 주세요.\n\n"
-                    "일반적인 건강 상담을 원하시면 그냥 질문해 주세요! 😊"
-                )
-                st.info(confirm_msg)
-            st.session_state.messages.append({"role": "assistant", "content": confirm_msg})
-            st.session_state.analysis_mode_pending = True
-            return
-
-    # 일반 스몰톡: LLM 서비스 확인
-    if st.session_state.llm_service is None:
+    # Router 확인
+    if st.session_state.router is None:
         with st.chat_message("assistant"):
             error_msg = "⚠️ LLM 서비스에 연결할 수 없습니다. API 키를 확인해주세요."
             if st.session_state.llm_error:
@@ -425,36 +463,98 @@ def handle_user_input(user_input: str):
         st.session_state.messages.append({"role": "assistant", "content": error_msg})
         return
 
-    # 일반 스몰톡: 어시스턴트 응답 생성 (st.write_stream 사용)
+    # 오케스트레이션 컨텍스트 구성
+    has_document = (
+        (st.session_state.ocr_structured and st.session_state.ocr_structured.get("tests"))
+        or st.session_state.ocr_text
+    )
+
+    context = OrchestrationContext(
+        user_input=user_input,
+        has_document=has_document,
+        document_context=format_document_context() if has_document else None,
+        chat_history=st.session_state.messages[-MAX_HISTORY_TURNS:],
+    )
+
+    # 1단계: 의도 분류 (경량 모델로 빠르게)
+    with st.status("🤔 3/4 의도 분석 중...", expanded=False) as intent_status:
+        intent = st.session_state.router.classify_intent(user_input)
+        context.intent = intent
+        intent_status.update(label=f"✅ 의도분류: {intent.intent_type.value}", state="complete")
+
+    # 디버그: 의도 분류 결과 (사이드바에 표시)
+    if settings.app_debug:
+        route_info = st.session_state.router.get_route_info(context)
+        st.sidebar.json(route_info)
+
+    # 2단계: 라우팅 및 응답 생성
+    route_type, stream_factory = st.session_state.router.route(context)
+
+    # 3단계: 라우트 타입에 따른 처리
+    if route_type == "analysis":
+        # 검사지 분석 모드: 추가 UI 표시
+        handle_analysis_response_with_context(context, stream_factory)
+    elif route_type == "upload_guide":
+        # 업로드 안내 (스트리밍 아님)
+        with st.chat_message("assistant"):
+            guide_message = next(iter(stream_factory()))
+            st.info(guide_message)
+        st.session_state.messages.append({"role": "assistant", "content": guide_message})
+        st.session_state.analysis_mode_pending = True
+    else:
+        # 일반 대화/응급 상황
+        with st.chat_message("assistant"):
+            try:
+                full_response = st.write_stream(stream_factory())
+            except Exception as e:
+                error_msg = f"⚠️ 응답 생성 중 오류가 발생했습니다: {str(e)}"
+                st.error(error_msg)
+                full_response = error_msg
+
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+    # 히스토리 관리 (토큰 절약)
+    if len(st.session_state.messages) > MAX_HISTORY_TURNS * 2:
+        st.session_state.messages = st.session_state.messages[-MAX_HISTORY_TURNS:]
+
+
+def handle_analysis_response_with_context(context: OrchestrationContext, stream_factory):
+    """검사 결과 분석 응답 생성 (오케스트레이션 버전)
+
+    Args:
+        context: 오케스트레이션 컨텍스트
+        stream_factory: 스트리밍 응답 생성기 팩토리
+    """
     with st.chat_message("assistant"):
+        # 1. 업로드된 이미지 표시
+        if st.session_state.uploaded_image is not None:
+            st.subheader("📷 분석 이미지")
+            st.image(st.session_state.uploaded_image, use_container_width=True)
+            st.divider()
+
+        # 2. OCR 인식 결과 표시
+        if st.session_state.ocr_text:
+            with st.expander("📝 OCR 인식 결과", expanded=False):
+                st.text(st.session_state.ocr_text)
+
+        # 3. 구조화된 데이터 표시
+        if st.session_state.ocr_debug_output:
+            with st.expander("🔬 구조화된 분석 데이터", expanded=False):
+                st.text(st.session_state.ocr_debug_output)
+
+        st.divider()
+        st.subheader("🩺 분석 결과")
+
         try:
-            # 멀티턴: 이전 대화 히스토리를 포함한 메시지 구성
-            # 문서가 있으면 컨텍스트에 포함 (일반 대화에서도 참조 가능)
-            include_doc = bool(st.session_state.ocr_structured or st.session_state.ocr_text)
-            llm_messages = build_messages_for_llm(user_input, include_document_context=include_doc)
-
-            # 스트리밍 제너레이터 생성
-            def stream_generator():
-                for chunk in st.session_state.llm_service.stream_generate(
-                    messages=llm_messages,
-                    temperature=0.7,
-                ):
-                    yield chunk
-
-            # st.write_stream()으로 스트리밍 출력
-            full_response = st.write_stream(stream_generator())
-
+            # 스트리밍 응답 생성
+            full_response = st.write_stream(stream_factory())
         except Exception as e:
-            error_msg = f"⚠️ 응답 생성 중 오류가 발생했습니다: {str(e)}"
+            error_msg = f"⚠️ 분석 중 오류가 발생했습니다: {str(e)}"
             st.error(error_msg)
             full_response = error_msg
 
-    # 스트리밍 완료 후 최종 응답을 히스토리에 저장
+    # 히스토리에 저장
     st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-    # 히스토리가 너무 길어지면 오래된 것 제거 (토큰 절약)
-    if len(st.session_state.messages) > MAX_HISTORY_TURNS * 2:
-        st.session_state.messages = st.session_state.messages[-MAX_HISTORY_TURNS:]
 
 
 def handle_analysis_response(user_input: str):
@@ -471,6 +571,25 @@ def handle_analysis_response(user_input: str):
         return
 
     with st.chat_message("assistant"):
+        # 1. 업로드된 이미지 표시
+        if st.session_state.uploaded_image is not None:
+            st.subheader("📷 분석 이미지")
+            st.image(st.session_state.uploaded_image, use_container_width=True)
+            st.divider()
+
+        # 2. OCR 인식 결과 표시
+        if st.session_state.ocr_text:
+            with st.expander("📝 OCR 인식 결과", expanded=False):
+                st.text(st.session_state.ocr_text)
+
+        # 3. 구조화된 데이터 표시 (debug output)
+        if st.session_state.ocr_debug_output:
+            with st.expander("🔬 구조화된 분석 데이터", expanded=False):
+                st.text(st.session_state.ocr_debug_output)
+
+        st.divider()
+        st.subheader("🩺 분석 결과")
+
         try:
             # 문서 컨텍스트를 포함한 메시지 구성
             llm_messages = build_messages_for_llm(user_input, include_document_context=True)
@@ -496,18 +615,25 @@ def handle_analysis_response(user_input: str):
 
 
 def main():
-    """메인 애플리케이션"""
+    """메인 애플리케이션 - Step 4.5(A) form 기반 단일 Send 플로우"""
     init_session_state()
 
     # 헤더
     st.title("🐱 냥닥터")
-    st.caption("고양이 건강 상담 도우미와 대화해보세요")
+    st.caption("고양이 건강검진 결과지를 업로드하고 질문해보세요!")
 
-    # 사이드바 - 설정 및 컨트롤
+    # 사이드바 - 설정 및 상태 정보
     with st.sidebar:
         st.subheader("⚙️ 설정")
-        st.info(f"**LLM:** {settings.llm_provider}")
+        st.info(f"**LLM Provider:** {settings.llm_provider}")
         st.info(f"**OCR:** {settings.ocr_provider}")
+
+        # 오케스트레이션 모델 정보
+        with st.expander("🤖 모델 설정", expanded=False):
+            st.caption(f"**의도분류:** {settings.openai_model_intent}")
+            st.caption(f"**스몰톡:** {settings.openai_model_chat}")
+            st.caption(f"**검사분석:** {settings.openai_model_analysis}")
+
         st.caption(f"대화 히스토리: 최근 {MAX_HISTORY_TURNS}개 유지")
 
         if st.session_state.llm_error:
@@ -525,50 +651,41 @@ def main():
             st.session_state.ocr_structured = None
             st.session_state.ocr_debug_output = None
             st.session_state.uploaded_image = None
+            st.session_state.last_ocr_cache_key = None
+            st.session_state.last_file_name = None
             st.rerun()
 
-        # Step 4: 결과지 업로드
-        st.divider()
-        st.subheader("📄 검사 결과지")
-
-        uploaded_file = st.file_uploader(
-            "이미지 또는 PDF 업로드",
-            type=["jpg", "jpeg", "png", "pdf", "webp"],
-            help="고양이 건강검진 결과지를 업로드하세요",
-        )
-
-        if uploaded_file:
-            with st.spinner("🔍 OCR 처리 중..."):
-                if handle_image_upload(uploaded_file):
-                    st.success("✅ OCR 완료!")
-
-        # OCR 결과가 있으면 삭제 버튼 표시
-        if st.session_state.ocr_text:
-            if st.button("🗑️ 결과지 삭제", use_container_width=True):
+        # 현재 업로드된 파일 정보
+        if st.session_state.last_file_name:
+            st.divider()
+            st.subheader("📄 현재 문서")
+            st.caption(f"파일: {st.session_state.last_file_name}")
+            if st.button("🗑️ 문서 삭제", use_container_width=True):
                 st.session_state.ocr_text = None
                 st.session_state.ocr_structured = None
                 st.session_state.ocr_debug_output = None
                 st.session_state.uploaded_image = None
+                st.session_state.last_ocr_cache_key = None
+                st.session_state.last_file_name = None
                 st.rerun()
 
         st.divider()
-        st.caption("Step 4 - OCR 화면")
-        st.caption("이미지 업로드 → OCR → 결과 표시")
+        st.caption("Step 4.5(A) - form 기반 단일 Send 플로우")
 
-    # 업로드된 이미지가 있으면 메인 영역에 표시
+    # 업로드된 이미지 표시 (접힌 상태)
     if st.session_state.uploaded_image:
         with st.expander("🖼️ 업로드된 이미지", expanded=False):
             st.image(st.session_state.uploaded_image, use_container_width=True)
 
-    # OCR 구조화 결과 표시 (Step 13: 최종 JSON 형식)
+    # OCR 구조화 결과 표시
     if st.session_state.ocr_debug_output or st.session_state.ocr_structured:
-        with st.expander("🧾 검사 결과 분석 (Step 13)", expanded=True):
+        with st.expander("🧾 검사 결과 분석", expanded=True):
             display_structured_result(
                 st.session_state.ocr_structured,
                 st.session_state.ocr_debug_output
             )
 
-    # OCR 원문 텍스트 (접힌 상태로)
+    # OCR 원문 텍스트 (접힌 상태)
     if st.session_state.ocr_text:
         with st.expander("📝 OCR 원문 보기", expanded=False):
             st.text_area(
@@ -581,9 +698,83 @@ def main():
     # 대화 히스토리 표시
     display_chat_history()
 
-    # 채팅 입력
-    if user_input := st.chat_input("메시지를 입력하세요..."):
-        handle_user_input(user_input)
+    # ========================================
+    # Step 4.5(A): form 기반 단일 Send 플로우
+    # ========================================
+    st.divider()
+
+    with st.form(key="chat_form", clear_on_submit=True):
+        # 파일 업로드
+        uploaded_file = st.file_uploader(
+            "📎 검진 결과지 첨부 (선택사항)",
+            type=["jpg", "jpeg", "png", "pdf", "webp"],
+            help="고양이 건강검진 결과지 이미지 또는 PDF를 첨부하세요. 이미 업로드한 파일이 있으면 생략해도 됩니다.",
+        )
+
+        # 질문 입력
+        user_input = st.text_area(
+            "💬 질문 입력",
+            placeholder="예: 이 검사 결과가 정상인가요? / 크레아티닌 수치가 높은데 걱정되요",
+            height=100,
+            help="검진 결과에 대한 질문을 입력하세요. 파일 없이 일반 건강 상담도 가능합니다.",
+        )
+
+        # 컬럼으로 버튼 배치
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            submitted = st.form_submit_button("🚀 Send", use_container_width=True)
+        with col2:
+            # form 안에서는 일반 버튼 사용 불가, 힌트만 표시
+            pass
+
+    # ========================================
+    # Send 버튼 클릭 시 처리
+    # ========================================
+    if submitted:
+        # 입력 검증
+        if not user_input and not uploaded_file:
+            st.warning("💡 질문을 입력하거나 파일을 첨부해주세요!")
+            st.stop()
+
+        # 파일 처리 (업로드된 경우)
+        if uploaded_file:
+            with st.status("🔄 처리 중...", expanded=True) as status:
+                st.write("📤 1/4 파일 업로드 완료")
+
+                st.write("🔍 2/4 OCR 분석 중...")
+                success, message, cache_hit = handle_image_upload(uploaded_file)
+
+                if success:
+                    if cache_hit:
+                        st.write(f"⚡ 2/4 {message}")
+                    else:
+                        st.write(f"✅ 2/4 {message}")
+                else:
+                    st.error(message)
+                    status.update(label="❌ 처리 실패", state="error")
+                    st.stop()
+
+                status.update(label="✅ 문서 준비 완료", state="complete")
+
+        # 질문이 있으면 LLM 응답 생성
+        if user_input:
+            handle_user_input(user_input)
+        elif uploaded_file and not user_input:
+            # 파일만 업로드하고 질문이 없는 경우: 자동 분석 제안
+            auto_message = "검진 결과지가 업로드되었어요! 어떤 점이 궁금하신가요? 🐱"
+            with st.chat_message("assistant"):
+                st.markdown(auto_message)
+            st.session_state.messages.append({"role": "assistant", "content": auto_message})
+
+    # ========================================
+    # 안전 문구 (하단 고정)
+    # ========================================
+    st.divider()
+    st.caption(
+        "⚠️ **주의**: 이 서비스는 참고용 정보만 제공합니다. "
+        "정확한 진단과 처방은 반드시 수의사와 상담하세요. "
+        "응급 상황이 의심되면 즉시 동물병원을 방문해주세요."
+    )
 
 
 if __name__ == "__main__":

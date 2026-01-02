@@ -36,10 +36,21 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, description="OpenAI API 키")
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API 키")
 
-    # 모델 설정
-    openai_model: str = Field(default="gpt-4o", description="OpenAI 모델명")
+    # 모델 설정 (기본값 - 하위호환용)
+    openai_model: str = Field(default="gpt-4o", description="OpenAI 기본 모델명 (하위호환)")
     anthropic_model: str = Field(
-        default="claude-3-5-sonnet-20241022", description="Anthropic 모델명"
+        default="claude-3-5-sonnet-20241022", description="Anthropic 기본 모델명"
+    )
+
+    # 용도별 모델 설정 (오케스트레이션용)
+    openai_model_intent: str = Field(
+        default="gpt-5-nano", description="의도분류용 모델 (빠르고 저렴한 모델 권장)"
+    )
+    openai_model_chat: str = Field(
+        default="gpt-5-mini", description="스몰톡/일반대화용 모델"
+    )
+    openai_model_analysis: str = Field(
+        default="gpt-4.1", description="검사지 분석용 모델 (고품질 모델 권장)"
     )
 
     # 앱 설정

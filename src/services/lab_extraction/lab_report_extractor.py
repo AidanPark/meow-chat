@@ -281,6 +281,7 @@ class LabReportExtractor:
                     self._dates_equal_nonempty(prev, cur)
                 )
             ):
+                # 병합 확정: tests 합치기
                 prev_tests = prev.get('tests')
                 if not isinstance(prev_tests, list):
                     prev_tests = []
@@ -288,6 +289,11 @@ class LabReportExtractor:
                 cur_tests = cur.get('tests') or []
                 if isinstance(cur_tests, list):
                     prev_tests.extend(cur_tests)
+
+                # 메타 필드 보강: prev가 None이면 cur 값으로 채우기 (정보 손실 방지)
+                for key in ['hospital_name', 'client_name', 'patient_name']:
+                    if not self._norm_blank(prev.get(key)) and self._norm_blank(cur.get(key)):
+                        prev[key] = cur.get(key)
             else:
                 _merged.append(dict(cur))
 
@@ -331,6 +337,7 @@ class LabReportExtractor:
                     self._dates_equal_nonempty(prev, cur)
                 )
             ):
+                # 병합 확정: tests 합치기
                 prev_tests = prev.get('tests')
                 if not isinstance(prev_tests, list):
                     prev_tests = []
@@ -338,6 +345,11 @@ class LabReportExtractor:
                 cur_tests = cur.get('tests') or []
                 if isinstance(cur_tests, list):
                     prev_tests.extend(cur_tests)
+
+                # 메타 필드 보강: prev가 None이면 cur 값으로 채우기 (정보 손실 방지)
+                for key in ['hospital_name', 'client_name', 'patient_name']:
+                    if not self._norm_blank(prev.get(key)) and self._norm_blank(cur.get(key)):
+                        prev[key] = cur.get(key)
             else:
                 _merged.append(dict(cur))
 

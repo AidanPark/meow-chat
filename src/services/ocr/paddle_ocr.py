@@ -198,16 +198,35 @@ class MyPaddleOCR(BaseOCRService):
             f"PaddleOCR 생성: lang={self.lang}, use_gpu={self.use_gpu}"
         )
 
-        # PaddleOCR 3.x 호환 설정 (이전 프로젝트와 동일)
+        # PaddleOCR 3.x 호환 설정
+        # 주의: use_gpu는 PaddleOCR 초기화 파라미터가 아니라 환경변수나 paddle.set_device()로 제어
         paddle_kwargs = {
             'lang': self.lang,
-            'use_doc_orientation_classify': True,  # 문서 방향 분류/교정 모델 로드
-            'use_doc_unwarping': True,             # 문서 휘어짐 보정
-            'use_textline_orientation': True,      # 방향 분류 활성화
+            'use_doc_orientation_classify': True,   # 문서 방향 분류/교정 모델 로드
+            'use_doc_unwarping': True,              # 문서 휘어짐 보정
+            'use_textline_orientation': True,       # 방향 분류 활성화
         }
 
         # 추가 kwargs 병합
         paddle_kwargs.update(self._init_kwargs)
+
+        # GPU/CPU 설정은 paddle 장치로 제어
+        if self.use_gpu:
+            try:
+                import paddle
+                paddle.set_device('gpu:0')
+                logger.info("PaddlePaddle 장치를 GPU로 설정")
+            except Exception as e:
+                logger.warning(f"GPU 설정 실패, CPU로 폴백: {e}")
+                import paddle
+                paddle.set_device('cpu')
+        else:
+            try:
+                import paddle
+                paddle.set_device('cpu')
+                logger.info("PaddlePaddle 장치를 CPU로 설정")
+            except Exception:
+                pass
 
         return PaddleOCR(**paddle_kwargs)
 
@@ -262,13 +281,16 @@ class MyPaddleOCR(BaseOCRService):
         rec_scores: List[float] = []
         dt_polys: List[List[List[float]]] = []
 
-        if raw_results is None:
+        if raw_results is None or (isinstance(raw_results, list) and len(raw_results) == 0):
+            logger.warning("PaddleOCR 결과가 비어있습니다.")
             return OCRItem(rec_texts=[], rec_scores=[], dt_polys=[])
 
         # PaddleOCR 3.x는 list[OCRResult] 형식으로 반환
         # result[0]이 OCRResult 객체이며, rec_texts, rec_scores, dt_polys 속성을 가짐
         if isinstance(raw_results, list) and len(raw_results) > 0:
+            logger.debug(f"[DEBUG] raw_results type: {type(raw_results)}, length: {len(raw_results)}")
             ocr_result = raw_results[0]  # 첫 번째 페이지/이미지 결과
+            logger.debug(f"[DEBUG] ocr_result type: {type(ocr_result)}, content: {ocr_result}")
 
             # OCRResult 객체에서 속성 추출 (속성 또는 딕셔너리 접근)
             if hasattr(ocr_result, 'rec_texts'):
@@ -388,10 +410,13 @@ class MyPaddleOCR(BaseOCRService):
             OCRResultEnvelope 또는 None (실패 시)
         """
         try:
+            logger.info(f"OCR 실행: shape={image_array.shape}, dtype={image_array.dtype}")
             result = self._predict_guarded(image_array)
+            logger.info(f"OCR 결과: type={type(result)}, length={len(result) if result else 0}")
 
             # PaddleOCR 3.x 결과를 OCRItem으로 변환
             item = self._convert_to_ocr_item(result)
+            logger.info(f"변환 완료: {len(item.rec_texts)}개 텍스트 감지")
 
             return OCRResultEnvelope(
                 stage="ocr",
@@ -451,8 +476,23 @@ class MyPaddleOCR(BaseOCRService):
         elif isinstance(image, bytes):
             return self.run_ocr_from_bytes(image)
         elif isinstance(image, Image.Image):
-            # PIL Image -> numpy array
-            return self.run_ocr_from_nparray(np.array(image))
+            # PIL Image -> numpy array (RGB -> BGR 변환)
+            # RGBA나 다른 모드는 RGB로 변환
+            if image.mode == 'RGBA':
+                # RGBA -> RGB 변환 (알파 채널 제거, 흰 배경으로 합성)
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                background.paste(image, mask=image.split()[3])  # 알파 채널을 마스크로 사용
+                image = background
+            elif image.mode != 'RGB':
+                # 다른 모드는 RGB로 변환
+                image = image.convert('RGB')
+
+            image_array = np.array(image)
+            # RGB to BGR (PaddleOCR은 OpenCV 기반이라 BGR 기대)
+            if len(image_array.shape) == 3 and image_array.shape[2] == 3:
+                image_array = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+            logger.info(f"PIL 이미지 변환 완료: shape={image_array.shape}, dtype={image_array.dtype}")
+            return self.run_ocr_from_nparray(image_array)
         elif isinstance(image, np.ndarray):
             return self.run_ocr_from_nparray(image)
         else:

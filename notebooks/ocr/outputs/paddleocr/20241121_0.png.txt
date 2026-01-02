@@ -1,6 +1,6 @@
 === Output for 20241121_0.png ===
 Original image: /home/aidan/projects/meow-chat/notebooks/ocr/assets/images/20241121_0.png
-Generated on: 2025-12-30 16:38:25 (Processing time: 00:19.99)
+Generated on: 2026-01-01 00:28:41 (Processing time: 00:14.59)
 
 🧾 Step 12: 포함/제외 tests 전체 (라인 순)
 code             |   value | value_conf | unit    | reference_min | reference_max | drop_reason  

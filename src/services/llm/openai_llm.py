@@ -28,17 +28,21 @@ class OpenAILLM(BaseLLMService):
 
         Args:
             messages: 대화 메시지 리스트
-            **kwargs: 추가 파라미터 (temperature, max_tokens 등)
+            **kwargs: 추가 파라미터 (temperature, max_tokens, model 등)
+                - model: 호출 시점에 모델을 override할 수 있음
 
         Returns:
             LLMResponse 객체
         """
+        # 호출 시점에 model override 가능
+        model = kwargs.pop("model", None) or self.model
+
         # Message 객체를 OpenAI 형식으로 변환
         openai_messages = [{"role": msg.role, "content": msg.content} for msg in messages]
 
         # API 호출
         response = self.client.chat.completions.create(
-            model=self.model, messages=openai_messages, **kwargs
+            model=model, messages=openai_messages, **kwargs
         )
 
         # 응답 변환
@@ -61,10 +65,14 @@ class OpenAILLM(BaseLLMService):
         Args:
             messages: 대화 메시지 리스트
             **kwargs: 추가 파라미터
+                - model: 호출 시점에 모델을 override할 수 있음
 
         Yields:
             응답 텍스트 조각(델타)
         """
+        # 호출 시점에 model override 가능
+        model = kwargs.pop("model", None) or self.model
+
         # Message 객체에서 input 구성 (Responses API 형식)
         # system 메시지는 instructions로, 나머지는 input으로 변환
         instructions = None
@@ -84,7 +92,7 @@ class OpenAILLM(BaseLLMService):
 
         # Responses API 스트리밍 호출
         stream_kwargs = {
-            "model": self.model,
+            "model": model,
             "input": api_input,
         }
         if instructions:
