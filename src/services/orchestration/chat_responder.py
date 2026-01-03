@@ -95,6 +95,17 @@ class ChatResponder:
         system_prompt = EMERGENCY_SYSTEM_PROMPT if is_emergency else CHAT_SYSTEM_PROMPT
         messages.append(Message(role="system", content=system_prompt))
 
+        # 1.1 언어 미러링 보강(짧은 입력/혼합 언어에서도 일관성 강화)
+        messages.append(
+            Message(
+                role="system",
+                content=(
+                    "답변은 항상 사용자가 마지막으로 입력한 언어로 작성하세요. "
+                    "입력 언어가 불명확하면 직전 사용자 메시지의 언어를 따르고, 그것도 없으면 한국어로 답하세요."
+                ),
+            )
+        )
+
         # 2. 문서 컨텍스트가 있으면 포함 (일반 대화에서도 참조 가능)
         if context.has_document and context.document_context:
             messages.append(Message(
@@ -114,4 +125,3 @@ class ChatResponder:
         messages.append(Message(role="user", content=context.user_input))
 
         return messages
-

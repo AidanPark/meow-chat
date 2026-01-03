@@ -1,7 +1,7 @@
 """오케스트레이션 레이어 테스트"""
 
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 from src.services.orchestration import (
     Router,
@@ -148,6 +148,17 @@ class TestChatResponder:
         chunks = list(responder.stream_generate(context))
         assert "".join(chunks) == "안녕하세요!"
 
+    def test_build_messages_includes_language_mirroring_system_hint(self, mock_llm_service):
+        """시스템 프롬프트 직후 언어 미러링 보강 system 메시지가 포함되는지 확인"""
+        responder = ChatResponder(mock_llm_service)
+        context = OrchestrationContext(user_input="hi")
+
+        messages = responder._build_messages(context)
+
+        assert messages[0].role == "system"
+        assert messages[1].role == "system"
+        assert "사용자가 마지막으로 입력한 언어" in messages[1].content
+
 
 class TestLabAnalysisResponder:
     """LabAnalysisResponder 테스트"""
@@ -172,6 +183,21 @@ class TestLabAnalysisResponder:
 
         chunks = list(responder.stream_generate(context))
         assert "분석" in "".join(chunks)
+
+    def test_build_messages_includes_language_mirroring_system_hint(self, mock_llm_service):
+        """시스템 프롬프트 직후 언어 미러링 보강 system 메시지가 포함되는지 확인"""
+        responder = LabAnalysisResponder(mock_llm_service)
+        context = OrchestrationContext(
+            user_input="hi",
+            has_document=True,
+            document_context="| WBC | 10.5 |",
+        )
+
+        messages = responder._build_messages(context)
+
+        assert messages[0].role == "system"
+        assert messages[1].role == "system"
+        assert "사용자가 마지막으로 입력한 언어" in messages[1].content
 
 
 class TestRouter:

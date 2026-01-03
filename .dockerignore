@@ -1,0 +1,33 @@
+# Python
+.env
+# Local env
+
+.coverage
+htmlcov/
+# Coverage
+
+notebooks/**/outputs/
+# Notebooks outputs
+
+.idea/
+# IDE
+
+.DS_Store
+# OS
+
+.gitignore
+.git/
+# Git
+
+.venv/
+# Virtualenv
+
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+*.so
+*.pyd
+*.pyo
+*.py[cod]
+__pycache__/
+

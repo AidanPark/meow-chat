@@ -594,44 +594,56 @@ def build_messages_for_llm(user_input: str, include_document_context: bool = Fal
 
 
 def format_document_context() -> str:
-    """OCR 구조화 데이터를 LLM 컨텍스트용 문자열로 포맷
+    """OCR 구조화 데이터를 LLM 컨텍스트용 JSON payload 문자열로 포맷
+
+    MVP 정책(docs/LAB_ANALYSIS_PROFESSIONALIZATION.md 10절):
+    - payload는 [doc] 단일 원소 배열
+    - unit UNKNOWN/빈값/None 또는 ref range 누락이면 tests에서 제외
+    - document_context에 JSON 문자열로 전달
+    - Phase 3: deterministic assessments 포함
 
     Returns:
-        포맷된 문서 컨텍스트 문자열
+        JSON 문자열 (LLM에 전달할 문서 배열, assessments 포함)
     """
-    doc = st.session_state.ocr_structured
-    tests = doc.get("tests", []) if doc else []
+    import json
+    from src.services.lab_extraction.validation import validate_document
+    from src.services.lab_extraction.assessment import assess_tests_to_dicts
 
-    # 구조화 데이터에 tests가 없으면 원문 텍스트 사용
-    if not tests:
+    doc = st.session_state.ocr_structured
+    raw_tests = doc.get("tests", []) if doc else []
+
+    # 구조화 데이터에 tests가 없으면 원문 텍스트 사용(fallback)
+    if not raw_tests:
         if st.session_state.ocr_text:
             return f"[OCR 원문]\n{st.session_state.ocr_text[:3000]}"
         return ""
 
-    lines = []
+    # Quality gate: validation 모듈 사용
+    validated_doc = validate_document(doc)
+    accepted_tests = validated_doc.get("tests", [])
 
-    # 메타데이터
-    if doc.get("hospital_name"):
-        lines.append(f"병원: {doc['hospital_name']}")
-    if doc.get("patient_name"):
-        lines.append(f"환자: {doc['patient_name']}")
-    if doc.get("inspection_date"):
-        lines.append(f"검사일: {doc['inspection_date']}")
+    # tests가 모두 제외됐으면 fallback
+    if not accepted_tests:
+        if st.session_state.ocr_text:
+            return f"[OCR 원문]\n{st.session_state.ocr_text[:3000]}"
+        return ""
 
-    # 검사 결과 테이블
-    lines.append("\n검사 결과:")
-    lines.append("| 검사항목 | 결과값 | 단위 | 정상범위(min-max) |")
-    lines.append("|----------|--------|------|-------------------|")
-    for test in tests:
-        code = test.get("code", "")
-        value = test.get("value", "-")
-        unit = test.get("unit", "")
-        ref_min = test.get("reference_min", "")
-        ref_max = test.get("reference_max", "")
-        ref_range = f"{ref_min}-{ref_max}" if ref_min or ref_max else "-"
-        lines.append(f"| {code} | {value} | {unit} | {ref_range} |")
+    # Phase 3: Deterministic assessments 생성
+    assessments = assess_tests_to_dicts(accepted_tests)
 
-    return "\n".join(lines)
+    # payload 구성: [doc] 형태 (assessments 포함)
+    payload_doc = {
+        "hospital_name": validated_doc.get("hospital_name"),
+        "client_name": validated_doc.get("client_name"),
+        "patient_name": validated_doc.get("patient_name"),
+        "inspection_date": validated_doc.get("inspection_date"),
+        "tests": accepted_tests,
+        "assessments": assessments,
+    }
+
+    payload = [payload_doc]
+
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def handle_user_input(user_input: str):

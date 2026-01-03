@@ -76,6 +76,17 @@ class LabAnalysisResponder:
         # 1. 시스템 프롬프트
         messages.append(Message(role="system", content=LAB_ANALYSIS_SYSTEM_PROMPT))
 
+        # 1.1 언어 미러링 보강(짧은 질문/혼합 언어에서도 일관성 강화)
+        messages.append(
+            Message(
+                role="system",
+                content=(
+                    "답변은 항상 사용자가 마지막으로 입력한 언어로 작성하세요. "
+                    "입력 언어가 불명확하면 직전 사용자 메시지의 언어를 따르고, 그것도 없으면 한국어로 답하세요."
+                ),
+            )
+        )
+
         # 2. 문서 컨텍스트 (필수)
         if context.document_context:
             messages.append(Message(
