@@ -102,6 +102,12 @@ def init_session_state():
     if "uploaded_image" not in st.session_state:
         st.session_state.uploaded_image = None
 
+    if "uploaded_images" not in st.session_state:
+        st.session_state.uploaded_images = []
+
+    if "page_metadata" not in st.session_state:
+        st.session_state.page_metadata = []
+
     # Step 4.5: 파일 캐싱용 키 및 정보 (캐시 키 = file_hash:provider)
     if "last_ocr_cache_key" not in st.session_state:
         st.session_state.last_ocr_cache_key = None
@@ -259,20 +265,47 @@ def extract_text_from_ocr_result(ocr_result) -> str:
 
 
 def display_structured_result(structured_data: dict, debug_output: str):
-    """구조화된 검사 결과를 표시
+    """구조화된 검사 결과를 표시 (노트북 스타일: 헤더 + 테이블)
 
     Args:
         structured_data: LabTableExtractor에서 반환된 구조화 데이터
         debug_output: debug_step13 출력 (노트북 Step 13 형식)
     """
-    if debug_output:
-        # 노트북 Step 13 형식 그대로 출력
-        st.text(debug_output)
-    elif structured_data:
-        # 폴백: structured_data를 직접 표시
-        st.json(structured_data)
-    else:
+    if not structured_data and not debug_output:
         st.info("추출된 검사 항목이 없습니다.")
+        return
+
+    # 노트북 스타일: 헤더 정보 + 테이블 출력
+    if structured_data:
+        tests = structured_data.get('tests', [])
+
+        # 헤더 정보 출력
+        lines = []
+        lines.append(f"🏥 hospital_name    : {structured_data.get('hospital_name') or '(None)'}")
+        lines.append(f"👤 client_name      : {structured_data.get('client_name') or '(None)'}")
+        lines.append(f"🐾 patient_name     : {structured_data.get('patient_name') or '(None)'}")
+        lines.append(f"🗓  inspection_date : {structured_data.get('inspection_date') or '(None)'}")
+        lines.append(f"📊 tests count      : {len(tests)}")
+        lines.append("")
+
+        # 테이블 출력
+        if tests:
+            lines.append("code         value  unit     reference_min  reference_max")
+            lines.append("------------+-------+---------+---------------+--------------")
+            for t in tests:
+                code = (t.get('code') or 'UNKNOWN')[:12].ljust(12)
+                value = str(t.get('value') or '')[:5].rjust(5)
+                unit = (t.get('unit') or 'UNKNOWN')[:7].ljust(7)
+                ref_min = str(t.get('reference_min') or 'UNKNOWN')[:13].rjust(13)
+                ref_max = str(t.get('reference_max') or 'UNKNOWN')[:13].rjust(13)
+                lines.append(f"{code} {value}  {unit}  {ref_min}  {ref_max}")
+
+        st.text("\n".join(lines))
+
+    # 디버그 출력 (있으면 추가 표시)
+    if debug_output:
+        with st.expander("🔍 상세 디버그 정보", expanded=False):
+            st.text(debug_output)
 
 
 def compute_file_hash(file_bytes: bytes) -> str:
@@ -301,12 +334,13 @@ def compute_ocr_cache_key(file_bytes: bytes) -> str:
     return f"{file_hash}:{provider}"
 
 
-def handle_image_upload(uploaded_file, force_rerun: bool = False) -> tuple[bool, str, bool]:
+def handle_image_upload(uploaded_file, force_rerun: bool = False, source: str = "file") -> tuple[bool, str, bool]:
     """이미지 업로드 처리 및 OCR 실행 (캐싱 지원)
 
     Args:
-        uploaded_file: Streamlit UploadedFile 객체
+        uploaded_file: Streamlit UploadedFile 객체 또는 카메라 입력
         force_rerun: 캐시를 무시하고 재실행할지 여부
+        source: 입력 소스 ("file" 또는 "camera")
 
     Returns:
         (success: bool, message: str, cache_hit: bool)
@@ -315,15 +349,27 @@ def handle_image_upload(uploaded_file, force_rerun: bool = False) -> tuple[bool,
         return False, "⚠️ OCR 서비스를 사용할 수 없습니다.", False
 
     try:
-        file_bytes = uploaded_file.read()
+        # 카메라 입력과 파일 업로드 모두 .read() 또는 .getvalue() 지원
+        if hasattr(uploaded_file, "read"):
+            file_bytes = uploaded_file.read()
+        elif hasattr(uploaded_file, "getvalue"):
+            file_bytes = uploaded_file.getvalue()
+        else:
+            return False, "⚠️ 지원하지 않는 입력 형식입니다.", False
+
         cache_key = compute_ocr_cache_key(file_bytes)
 
         # 캐싱: 동일 파일+provider이면 OCR 건너뛰기 (force_rerun이 아닐 때)
         if not force_rerun and cache_key == st.session_state.last_ocr_cache_key:
             return True, "✅ 캐시 사용: 이전 OCR 결과를 재사용합니다.", True
 
+        # 파일명 추출 (카메라 입력은 name이 없을 수 있음)
+        file_name = getattr(uploaded_file, "name", None)
+        if file_name is None:
+            file_name = f"camera_{source}.jpg"  # 카메라 촬영 기본 이름
+
         # PDF 또는 이미지 처리
-        if is_pdf(uploaded_file.name):
+        if is_pdf(file_name):
             images = pdf_bytes_to_images(file_bytes, dpi=300)
             st.session_state.uploaded_image = images[0]  # 첫 페이지 표시용
             print(f"[DEBUG] PDF 변환: 첫 페이지 크기={images[0].size}, 모드={images[0].mode}")
@@ -347,7 +393,7 @@ def handle_image_upload(uploaded_file, force_rerun: bool = False) -> tuple[bool,
 
         # 캐싱용 정보 저장 (cache_key = file_hash:provider)
         st.session_state.last_ocr_cache_key = cache_key
-        st.session_state.last_file_name = uploaded_file.name
+        st.session_state.last_file_name = file_name
 
         # OCR 품질 체크
         if not raw_text or len(raw_text.strip()) < 20:
@@ -356,6 +402,154 @@ def handle_image_upload(uploaded_file, force_rerun: bool = False) -> tuple[bool,
         return True, "✅ OCR 완료!", False
     except Exception as e:
         return False, f"⚠️ 이미지 처리 중 오류: {str(e)}", False
+
+
+def handle_multi_file_upload(
+    input_files: list,
+    max_pdf_pages: int = 10,
+    status_callback=None
+) -> tuple[bool, str, int]:
+    """멀티파일 업로드 처리 및 OCR 실행 + 결과 병합
+
+    Args:
+        input_files: [{"file": UploadedFile, "source": str, "name": str}, ...]
+        max_pdf_pages: PDF 최대 페이지 수 (임시 상한)
+        status_callback: 진행 상황 콜백 (msg: str) -> None
+
+    Returns:
+        (success: bool, message: str, processed_page_count: int)
+    """
+    if st.session_state.ocr_service is None:
+        return False, "⚠️ OCR 서비스를 사용할 수 없습니다.", 0
+
+    def log(msg):
+        if status_callback:
+            status_callback(msg)
+
+    try:
+        from src.services.lab_extraction import LabReportExtractor
+
+        # 페이지별 이미지 리스트 생성 (파일/페이지 순서 유지)
+        page_images = []  # [(file_name, page_idx, total_pages, PIL.Image), ...]
+        all_file_bytes = []  # 캐시 키 계산용
+
+        for item in input_files:
+            file_obj = item["file"]
+            file_name = item["name"]
+
+            # bytes 추출
+            if hasattr(file_obj, "read"):
+                file_bytes = file_obj.read()
+            elif hasattr(file_obj, "getvalue"):
+                file_bytes = file_obj.getvalue()
+            else:
+                continue
+
+            all_file_bytes.append(file_bytes)
+
+            # PDF vs 이미지 분기
+            if is_pdf(file_name):
+                images = pdf_bytes_to_images(file_bytes, dpi=300)
+                total_pages = len(images)
+
+                # 페이지 상한 적용
+                if total_pages > max_pdf_pages:
+                    log(f"⚠️ {file_name}: {total_pages}페이지 중 처음 {max_pdf_pages}페이지만 처리")
+                    images = images[:max_pdf_pages]
+
+                for idx, img in enumerate(images):
+                    page_images.append((file_name, idx + 1, min(total_pages, max_pdf_pages), img))
+            else:
+                # 단일 이미지
+                image = load_image_from_bytes(file_bytes)
+                image = resize_image(image, max_width=2048, max_height=2048)
+                page_images.append((file_name, 1, 1, image))
+
+        if not page_images:
+            return False, "⚠️ 처리할 이미지가 없습니다.", 0
+
+        # 캐시 키 계산 (문서 묶음 단위, 순서 포함)
+        combined_hash = hashlib.sha256()
+        for fb in all_file_bytes:
+            combined_hash.update(fb)
+        cache_key = f"{combined_hash.hexdigest()}:{settings.ocr_provider}"
+
+        # 캐싱 체크
+        if cache_key == st.session_state.last_ocr_cache_key:
+            return True, f"⚡ 캐시 사용: 이전 결과 재사용 ({len(page_images)}페이지)", len(page_images)
+
+        # 페이지별 OCR 실행 및 extraction 수집
+        extractions = []
+        raw_texts = []
+        all_images = []  # 모든 페이지 이미지 저장 (프리뷰용)
+        page_metadata = []  # 각 페이지 메타데이터
+
+        for i, (fname, page_idx, total_pages, img) in enumerate(page_images):
+            all_images.append(img)
+            page_metadata.append({
+                "file_name": fname,
+                "page_idx": page_idx,
+                "total_pages": total_pages,
+            })
+
+            log(f"   📄 [{i+1}/{len(page_images)}] {fname} (p{page_idx}/{total_pages}) OCR 중...")
+
+            # OCR 실행
+            ocr_result = st.session_state.ocr_service.extract_text(img)
+
+            # 구조화 추출
+            structured, debug_output, raw_text = process_ocr_result(ocr_result)
+
+            # 파일/페이지 경계 구분자 추가
+            separator = f"\n--- file:{fname} page:{page_idx}/{total_pages} ---\n"
+            raw_texts.append(separator + (raw_text or ""))
+
+            if structured:
+                # extraction에 페이지 메타 추가
+                structured["_page_meta"] = {
+                    "file_name": fname,
+                    "page_idx": page_idx,
+                    "total_pages": total_pages,
+                }
+                extractions.append(structured)
+
+        # 병합 (LabReportExtractor 사용)
+        merged_structured = None
+        merged_debug = None
+
+        if extractions:
+            try:
+                extractor = LabReportExtractor.create_with_deps()
+                merge_result = extractor.merge_extractions(extractions)
+
+                # 병합 결과에서 첫 문서 추출 (merged는 리스트)
+                merged_list = merge_result.data.merged if hasattr(merge_result.data, 'merged') else []
+                if merged_list:
+                    merged_structured = merged_list[0]  # 첫 번째 병합 문서
+
+                    # 디버그 출력 생성
+                    if st.session_state.lab_extractor:
+                        merged_debug = st.session_state.lab_extractor.debug_step13(merged_structured)
+            except Exception as e:
+                log(f"⚠️ 병합 중 오류 (개별 결과 사용): {e}")
+                # 병합 실패 시 첫 번째 extraction 사용
+                if extractions:
+                    merged_structured = extractions[0]
+
+        # 세션에 저장
+        st.session_state.uploaded_image = all_images[0] if all_images else None  # 첫 이미지 (하위 호환)
+        st.session_state.uploaded_images = all_images  # 모든 이미지
+        st.session_state.page_metadata = page_metadata  # 페이지 메타데이터
+        st.session_state.ocr_text = "\n".join(raw_texts)
+        st.session_state.ocr_structured = merged_structured
+        st.session_state.ocr_debug_output = merged_debug
+        st.session_state.last_ocr_cache_key = cache_key
+        st.session_state.last_file_name = f"{len(input_files)}개 파일 ({len(page_images)}페이지)"
+
+        return True, f"✅ OCR 완료! ({len(page_images)}페이지 처리, 병합됨)", len(page_images)
+
+    except Exception as e:
+        return False, f"⚠️ 멀티파일 처리 중 오류: {str(e)}", 0
 
 
 def build_messages_for_llm(user_input: str, include_document_context: bool = False) -> list[Message]:
@@ -526,24 +720,40 @@ def handle_analysis_response_with_context(context: OrchestrationContext, stream_
         stream_factory: 스트리밍 응답 생성기 팩토리
     """
     with st.chat_message("assistant"):
-        # 1. 업로드된 이미지 표시
-        if st.session_state.uploaded_image is not None:
+        # 1. 업로드된 이미지 표시 (모든 이미지)
+        if st.session_state.uploaded_images:
+            st.subheader(f"📷 분석 이미지 ({len(st.session_state.uploaded_images)}장)")
+            for i, img in enumerate(st.session_state.uploaded_images):
+                if i < len(st.session_state.page_metadata):
+                    meta = st.session_state.page_metadata[i]
+                    st.caption(f"📄 {meta['file_name']} (페이지 {meta['page_idx']}/{meta['total_pages']})")
+                st.image(img, use_container_width=True)
+                if i < len(st.session_state.uploaded_images) - 1:
+                    st.divider()
+        elif st.session_state.uploaded_image is not None:
+            # 하위 호환: 단일 이미지
             st.subheader("📷 분석 이미지")
             st.image(st.session_state.uploaded_image, use_container_width=True)
+
+        if st.session_state.uploaded_images or st.session_state.uploaded_image:
             st.divider()
 
-        # 2. OCR 인식 결과 표시
+        # 2. 구조화된 검사 결과 표시 (노트북 스타일)
+        if st.session_state.ocr_structured or st.session_state.ocr_debug_output:
+            st.subheader("🧾 검사 결과 데이터")
+            display_structured_result(
+                st.session_state.ocr_structured,
+                st.session_state.ocr_debug_output
+            )
+            st.divider()
+
+        # 3. OCR 원문 (접힌 상태)
         if st.session_state.ocr_text:
             with st.expander("📝 OCR 인식 결과", expanded=False):
                 st.text(st.session_state.ocr_text)
 
-        # 3. 구조화된 데이터 표시
-        if st.session_state.ocr_debug_output:
-            with st.expander("🔬 구조화된 분석 데이터", expanded=False):
-                st.text(st.session_state.ocr_debug_output)
-
         st.divider()
-        st.subheader("🩺 분석 결과")
+        st.subheader("🩺 AI 분석 해석")
 
         try:
             # 스트리밍 응답 생성
@@ -651,6 +861,8 @@ def main():
             st.session_state.ocr_structured = None
             st.session_state.ocr_debug_output = None
             st.session_state.uploaded_image = None
+            st.session_state.uploaded_images = []
+            st.session_state.page_metadata = []
             st.session_state.last_ocr_cache_key = None
             st.session_state.last_file_name = None
             st.rerun()
@@ -665,6 +877,8 @@ def main():
                 st.session_state.ocr_structured = None
                 st.session_state.ocr_debug_output = None
                 st.session_state.uploaded_image = None
+                st.session_state.uploaded_images = []
+                st.session_state.page_metadata = []
                 st.session_state.last_ocr_cache_key = None
                 st.session_state.last_file_name = None
                 st.rerun()
@@ -673,7 +887,18 @@ def main():
         st.caption("Step 4.5(A) - form 기반 단일 Send 플로우")
 
     # 업로드된 이미지 표시 (접힌 상태)
-    if st.session_state.uploaded_image:
+    if st.session_state.uploaded_images:
+        with st.expander(f"🖼️ 업로드된 이미지 ({len(st.session_state.uploaded_images)}장)", expanded=False):
+            for i, img in enumerate(st.session_state.uploaded_images):
+                # 페이지 메타데이터가 있으면 표시
+                if i < len(st.session_state.page_metadata):
+                    meta = st.session_state.page_metadata[i]
+                    st.caption(f"📄 {meta['file_name']} (페이지 {meta['page_idx']}/{meta['total_pages']})")
+                st.image(img, use_container_width=True)
+                if i < len(st.session_state.uploaded_images) - 1:
+                    st.divider()
+    elif st.session_state.uploaded_image:
+        # 하위 호환: 단일 이미지
         with st.expander("🖼️ 업로드된 이미지", expanded=False):
             st.image(st.session_state.uploaded_image, use_container_width=True)
 
@@ -699,16 +924,27 @@ def main():
     display_chat_history()
 
     # ========================================
-    # Step 4.5(A): form 기반 단일 Send 플로우
+    # Step 4.x: form 기반 멀티파일 Send 플로우
     # ========================================
     st.divider()
 
+    # 파일 상한 설정 (Phase 2 전 임시)
+    MAX_FILES = 5
+    MAX_PDF_PAGES = 10
+
     with st.form(key="chat_form", clear_on_submit=True):
-        # 파일 업로드
-        uploaded_file = st.file_uploader(
-            "📎 검진 결과지 첨부 (선택사항)",
+        # 파일 업로드 (멀티파일 지원)
+        uploaded_files = st.file_uploader(
+            f"📎 검진 결과지 첨부 (최대 {MAX_FILES}개)",
             type=["jpg", "jpeg", "png", "pdf", "webp"],
-            help="고양이 건강검진 결과지 이미지 또는 PDF를 첨부하세요. 이미 업로드한 파일이 있으면 생략해도 됩니다.",
+            accept_multiple_files=True,
+            help=f"고양이 건강검진 결과지 이미지 또는 PDF를 첨부하세요. 최대 {MAX_FILES}개, PDF는 페이지당 처리됩니다.",
+        )
+
+        # 카메라 촬영 (모바일 지원)
+        camera_image = st.camera_input(
+            "📷 카메라로 촬영 (선택사항)",
+            help="모바일에서 검진 결과지를 카메라로 촬영할 수 있습니다.",
         )
 
         # 질문 입력
@@ -728,38 +964,59 @@ def main():
             pass
 
     # ========================================
-    # Send 버튼 클릭 시 처리
+    # Send 버튼 클릭 시 처리 (Step 4.x: 멀티파일)
     # ========================================
     if submitted:
+        # 입력 통합: 파일 업로드 리스트 + 카메라 촬영
+        # (Step 4.x: 멀티파일 처리, 업로드 순서 유지)
+        input_files = []
+
+        # 파일 업로더에서 온 파일들 추가
+        if uploaded_files:
+            for f in uploaded_files:
+                input_files.append({"file": f, "source": "file_uploader", "name": f.name})
+
+        # 카메라 촬영 이미지 추가 (있으면 마지막에)
+        if camera_image is not None:
+            input_files.append({"file": camera_image, "source": "camera", "name": "camera_capture.jpg"})
+
+        # 파일 상한 체크
+        if len(input_files) > MAX_FILES:
+            st.warning(f"⚠️ 최대 {MAX_FILES}개 파일까지 처리 가능합니다. 처음 {MAX_FILES}개만 처리합니다.")
+            input_files = input_files[:MAX_FILES]
+
         # 입력 검증
-        if not user_input and not uploaded_file:
-            st.warning("💡 질문을 입력하거나 파일을 첨부해주세요!")
+        if not user_input and not input_files:
+            st.warning("💡 질문을 입력하거나 파일을 첨부/촬영해주세요!")
             st.stop()
 
-        # 파일 처리 (업로드된 경우)
-        if uploaded_file:
+        # 파일 처리 (멀티파일)
+        if input_files:
             with st.status("🔄 처리 중...", expanded=True) as status:
-                st.write("📤 1/4 파일 업로드 완료")
+                total_files = len(input_files)
+                st.write(f"📤 1/4 파일 {total_files}개 업로드 완료")
 
-                st.write("🔍 2/4 OCR 분석 중...")
-                success, message, cache_hit = handle_image_upload(uploaded_file)
+                # 멀티파일 OCR 처리
+                st.write(f"🔍 2/4 OCR 분석 중... (총 {total_files}개 파일)")
+                success, message, processed_count = handle_multi_file_upload(
+                    input_files,
+                    max_pdf_pages=MAX_PDF_PAGES,
+                    status_callback=lambda msg: st.write(msg)
+                )
 
                 if success:
-                    if cache_hit:
-                        st.write(f"⚡ 2/4 {message}")
-                    else:
-                        st.write(f"✅ 2/4 {message}")
+                    st.write(f"✅ 2/4 {message}")
                 else:
                     st.error(message)
                     status.update(label="❌ 처리 실패", state="error")
                     st.stop()
 
-                status.update(label="✅ 문서 준비 완료", state="complete")
+                status.update(label=f"✅ 문서 준비 완료 ({processed_count}페이지)", state="complete")
 
         # 질문이 있으면 LLM 응답 생성
         if user_input:
             handle_user_input(user_input)
-        elif uploaded_file and not user_input:
+        elif input_files and not user_input:
             # 파일만 업로드하고 질문이 없는 경우: 자동 분석 제안
             auto_message = "검진 결과지가 업로드되었어요! 어떤 점이 궁금하신가요? 🐱"
             with st.chat_message("assistant"):

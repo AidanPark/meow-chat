@@ -395,8 +395,8 @@ def extract_and_group_lines(
             print(f"[DEBUG] {title}: (non-serializable) {type(data)}")
 
     items = extract_tokens_with_geometry(ocr_result)
-    if isDebug:
-        _dbg_print("tokens_with_geometry", items)
+    # if isDebug:
+    #     _dbg_print("tokens_with_geometry", items)
     if not items:
         return []
 
@@ -423,12 +423,12 @@ def extract_and_group_lines(
         return []
 
     items = assign_line_indices_by_y(items, alpha=alpha)
-    if isDebug:
-        _dbg_print("tokens_with_line_index", items)
+    # if isDebug:
+    #     _dbg_print("tokens_with_line_index", items)
 
     grouped = group_tokens_by_line(items, order=order, alpha=alpha)
-    if isDebug:
-        _dbg_print("grouped_lines_before_split", grouped)
+    # if isDebug:
+    #     _dbg_print("grouped_lines_before_split", grouped)
 
     # 4.4 라인 선두(Name 열) 분리 토큰 병합
     # - 괄호형: 예) POTASSIUM | (K+) → POTASSIUM(K+)
@@ -545,8 +545,8 @@ def extract_and_group_lines(
         return merged_lines
 
     grouped = _merge_name_fragments(grouped)
-    if isDebug:
-        _dbg_print("grouped_lines_after_4_4_name_merge", grouped)
+    # if isDebug:
+    #     _dbg_print("grouped_lines_after_4_4_name_merge", grouped)
 
     # 4.4-보강: 첫 번째 컬럼 텍스트에서 괄호 앞 공백 제거 (예: 'SODIUM (Na+)' → 'SODIUM(Na+)')
     try:
@@ -656,8 +656,8 @@ def extract_and_group_lines(
     for line in grouped:
         grouped_after_split.append(_split_line_tokens_preserve_fields(line))
     grouped = grouped_after_split
-    if isDebug:
-        _dbg_print("grouped_lines_after_split", grouped)
+    # if isDebug:
+    #     _dbg_print("grouped_lines_after_split", grouped)
 
     # 4.5 분리 직후 1차 단위 처리(표시만)
     # - 중복 정규화를 피하기 위해 이 단계에서는 단위를 '표시/주석'만 하고 텍스트를 변경하지 않습니다.

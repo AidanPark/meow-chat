@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     openai_model_analysis: str = Field(
         default="gpt-4.1", description="검사지 분석용 모델 (고품질 모델 권장)"
     )
+    openai_model_metadata: str = Field(
+        default="gpt-4o-mini", description="메타데이터 추출용 모델 (빠르고 저렴한 모델 권장)"
+    )
+
+    # 검사지 추출 설정
+    lab_extraction_use_llm_metadata: bool = Field(
+        default=False, description="patient_name 추출 실패 시 LLM 폴백 사용"
+    )
 
     # 앱 설정
     app_debug: bool = Field(default=False, description="디버그 모드")

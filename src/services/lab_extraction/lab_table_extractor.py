@@ -35,6 +35,20 @@ try:
 except Exception:  # pragma: no cover - allow import even before module is present in some envs
     get_code_lexicon = None  # type: ignore
 
+# 프롬프트 모듈
+try:
+    from src.prompts import (
+        PATIENT_NAME_SYSTEM_PROMPT,
+        HEADER_INFERENCE_SYSTEM_PROMPT,
+    )
+    from src.prompts.metadata_extraction import format_patient_name_user_prompt
+    from src.prompts.header_inference import format_header_inference_user_prompt
+except Exception:  # pragma: no cover
+    PATIENT_NAME_SYSTEM_PROMPT = None  # type: ignore
+    HEADER_INFERENCE_SYSTEM_PROMPT = None  # type: ignore
+    format_patient_name_user_prompt = None  # type: ignore
+    format_header_inference_user_prompt = None  # type: ignore
+
 # 코드 정규화/해석 모듈 (unit_normalizer와 동일한 분리 스타일)
 try:
     from .code_normalizer import resolve_code_with_fallback as _resolve_code_norm
@@ -74,6 +88,9 @@ class Settings:
     # LLM 동시성 제어 옵션
     enable_llm_lock: bool = True
     llm_max_concurrency: int = 2
+    # 메타데이터 LLM 폴백 설정
+    use_llm_for_metadata: bool = False  # patient_name 추출 실패 시 LLM 폴백 활성화
+    llm_metadata_model: str = "gpt-4o-mini"  # 메타데이터 추출용 모델 (빠르고 저렴한 모델 권장)
 
     # 헤더 추론 보수 임계치 설정 (Step 7)
     min_rows_for_inference: int = 8
@@ -185,6 +202,14 @@ class LabTableExtractor:
     ) -> None:
         self.settings = settings or Settings()
         self.logger = logger or logging.getLogger(__name__)
+
+        # 글로벌 settings 가져오기 (메타데이터 LLM 폴백 설정용)
+        try:
+            from src.settings import settings as global_settings
+            self._global_settings = global_settings
+        except Exception:
+            self._global_settings = None
+
         # LLM 클라이언트는 내부에서 관리한다.
         # 모델 우선순위: 전달 인자 → LAB_TABLE_EXTRACTOR_MODEL → MEOW_LLM_MODEL → OPENAI_DEFAULT_MODEL → 폴백
         _default_model = os.environ.get("OPENAI_DEFAULT_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini"
@@ -441,6 +466,30 @@ class LabTableExtractor:
                 doc.update({
                     k: v for k, v in meta.items() if k in ("hospital_name", "client_name", "patient_name", "inspection_date")
                 })
+
+                # 7-1) patient_name LLM 폴백 (규칙으로 찾지 못한 경우만)
+                # 글로벌 settings 우선 확인
+                use_llm_fallback = False
+                if self._global_settings:
+                    use_llm_fallback = getattr(self._global_settings, "lab_extraction_use_llm_metadata", False)
+                # 로컬 settings도 확인 (하위호환)
+                if not use_llm_fallback:
+                    use_llm_fallback = getattr(self.settings, "use_llm_for_metadata", False)
+
+                if use_llm_fallback:
+                    patient_name = meta.get("patient_name")
+                    if not patient_name or not str(patient_name).strip():
+                        try:
+                            client_name = meta.get("client_name")
+                            llm_patient_name = self._extract_patient_name_with_llm(
+                                lines, body_start, client_name=client_name
+                            )
+                            if llm_patient_name and str(llm_patient_name).strip():
+                                meta["patient_name"] = llm_patient_name
+                                doc["patient_name"] = llm_patient_name
+                                meta_dbg["patient_name_source"] = "llm_fallback"
+                        except Exception:
+                            pass
         except Exception:
             meta_dbg = {"meta_error": True}
 
@@ -1567,20 +1616,14 @@ class LabTableExtractor:
             if not sample:
                 return {}, []
 
-            system_prompt = (
-                "You are an expert at labeling table columns in veterinary lab reports. "
-                "Given sample rows (array of token arrays), infer column roles among: "
-                "name, result, unit, reference, min, max. Return a single JSON object mapping each role to an object "
-                "with fields: {label:'llm', hits:['llm'], col_index:<int>, tokens:[], confidence:0.9, meets_threshold:true}. "
-                "Rules: name is the first column with test codes; result is numeric values (may include H/L/N/High/Low/Normal suffix); "
-                "unit is measurement units; reference is a range (a-b). If the document splits the range into two separate columns, use min and max instead of reference. "
-                "Important: choose either 'reference' OR ('min' and 'max'); never output both forms at the same time. Do not assign the same column index to multiple roles. "
-                "Output only the JSON object with no extra text."
-            )
-            user_prompt = {
-                "sample_rows": sample,
-                "notes": "Pick exactly one index per applicable role. Use reference OR (min and max), not both. Avoid duplicate indices across roles."
-            }
+            # 프롬프트 가져오기
+            system_prompt = HEADER_INFERENCE_SYSTEM_PROMPT
+            if system_prompt is None:
+                return {}, sample
+
+            user_prompt_text = format_header_inference_user_prompt(sample)
+            if user_prompt_text is None:
+                return {}, sample
 
             # OpenAI Chat Completions 호출 (락/세마포어 보호)
             try:
@@ -1588,7 +1631,7 @@ class LabTableExtractor:
                     "model": getattr(self, "llm_model", "gpt-4.1-mini"),
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": str(user_prompt)},
+                        {"role": "user", "content": user_prompt_text},
                     ],
                     "temperature": 0,
                     "response_format": {"type": "json_object"},
@@ -2296,6 +2339,148 @@ class LabTableExtractor:
             "header_shape": header_shape,
         }
         return meta, debug
+
+    def _extract_patient_name_with_llm(
+        self, lines: Lines, body_start_idx: int, client_name: Optional[str] = None
+    ) -> Optional[str]:
+        """규칙 기반으로 patient_name을 찾지 못했을 때 LLM으로 폴백 추출.
+
+        정책
+        ----
+        - 바디 이전 영역(헤더 포함)의 텍스트를 LLM에게 제공
+        - client_name(보호자명)과 혼동하지 않도록 명시적으로 지시
+        - 확실하지 않으면 빈 문자열 반환 요청
+
+        반환
+        ----
+        - patient_name: 추출된 환자명 (확신 없으면 None)
+        """
+        try:
+            # 1) LLM 사용 가능 여부 확인 (글로벌 settings 우선)
+            use_llm = False
+            llm_model = "gpt-4o-mini"
+
+            # 글로벌 settings 확인
+            if self._global_settings:
+                use_llm = getattr(self._global_settings, "lab_extraction_use_llm_metadata", False)
+                llm_model = getattr(self._global_settings, "openai_model_metadata", "gpt-4o-mini")
+
+            # 로컬 settings도 확인 (하위호환)
+            if not use_llm:
+                use_llm = getattr(self.settings, "use_llm_for_metadata", False)
+                llm_model = getattr(self.settings, "llm_metadata_model", llm_model)
+
+            if not use_llm:
+                return None
+            if not getattr(self, "llm", None):
+                return None
+
+            # 2) 바디 이전 영역 텍스트 추출
+            try:
+                end_idx = max(0, int(body_start_idx) - 1)
+            except Exception:
+                end_idx = max(0, body_start_idx - 1)
+
+            region = lines[0 : end_idx + 1]
+            if not region:
+                return None
+
+            # 라인별 텍스트 결합
+            header_texts: List[str] = []
+            for line in region:
+                try:
+                    text = self._line_join_texts(line, sep=" ")
+                    if text and text.strip():
+                        header_texts.append(text.strip())
+                except Exception:
+                    continue
+
+            if not header_texts:
+                return None
+
+            header_block = "\n".join(header_texts)
+
+            # 3) 프롬프트 생성
+            system_prompt = PATIENT_NAME_SYSTEM_PROMPT
+            if system_prompt is None:
+                return None
+
+            user_prompt = format_patient_name_user_prompt(header_block, client_name)
+            if user_prompt is None:
+                return None
+
+
+            # 4) LLM 호출 (OpenAI API 형식)
+            try:
+                payload = {
+                    "model": llm_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": 0,
+                    "max_tokens": 50,  # 이름은 짧으므로
+                }
+
+                content = ""
+                # 세마포어 및 락 획득 (동시성 제어)
+                sem = getattr(self.__class__, "_LLM_SEMAPHORE", None)
+                lock = getattr(self, "_llm_lock", None) if bool(getattr(self.settings, "enable_llm_lock", True)) else None
+
+                if sem is not None:
+                    sem.acquire()
+                try:
+                    if lock is not None:
+                        lock.acquire()
+                    try:
+                        resp = self.llm.chat.completions.create(**payload)  # type: ignore[attr-defined]
+
+                        # 응답 파싱
+                        try:
+                            choices = getattr(resp, "choices", None)
+                            if isinstance(choices, list) and choices:
+                                ch0 = choices[0]
+                                msg = getattr(ch0, "message", None)
+                                if msg is not None:
+                                    c = getattr(msg, "content", None)
+                                    if isinstance(c, str) and c:
+                                        content = c
+                        except Exception:
+                            pass
+
+                        if not content and isinstance(resp, dict):
+                            content = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+                    finally:
+                        if lock is not None:
+                            lock.release()
+                finally:
+                    if sem is not None:
+                        sem.release()
+
+                # 5) 응답 정제
+                if not content:
+                    return None
+
+                name = content.strip()
+                # 너무 길거나, 숫자만 있거나, 라벨이 포함된 경우 배제
+                if not name or len(name) > 40:
+                    return None
+                if re.fullmatch(r"[0-9\W_]+", name):
+                    return None
+                # 라벨 패턴 제거 시도
+                name = re.sub(r"^(환자명|환자|반려동물|동물명|pet|animal|name|patient)[:\s：\-~–—]*", "", name, flags=re.IGNORECASE).strip()
+                # client_name과 동일하면 배제
+                if client_name and name.lower() == client_name.lower():
+                    return None
+
+                return name if name else None
+
+            except Exception:
+                return None
+
+        except Exception:
+            return None
 
     # -----------------------
     # Header-Body alignment evaluation (OCR gate)

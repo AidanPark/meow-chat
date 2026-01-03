@@ -10,38 +10,13 @@ from typing import TYPE_CHECKING
 
 from src.settings import settings
 from src.services.llm.base import Message
+from src.prompts import INTENT_CLASSIFICATION_SYSTEM_PROMPT
 
 from .models import Intent, IntentType
 
 if TYPE_CHECKING:
     from src.services.llm.base import BaseLLMService
 
-
-# 의도 분류용 시스템 프롬프트
-INTENT_CLASSIFICATION_PROMPT = """당신은 고양이 건강 상담 챗봇의 의도 분류기입니다.
-사용자 입력을 분석하여 아래 의도 중 하나로 분류하세요.
-
-## 의도 유형
-1. **lab_analysis**: 검사지/검진 결과 분석 요청
-   - 예: "이 검사 결과 분석해줘", "혈액검사 수치가 높은데", "결과지 해석해줘"
-2. **health_question**: 건강 관련 일반 질문 (검사지 없이)
-   - 예: "고양이가 밥을 안 먹어요", "구토를 자주 해요", "정상 체온이 몇 도예요?"
-3. **emergency**: 응급 상황 (즉시 병원 권유 필요)
-   - 예: "숨을 못 쉬어요", "경련을 해요", "피를 토해요", "의식이 없어요"
-4. **upload_help**: 업로드 방법 문의
-   - 예: "파일 어떻게 올려요?", "사진 첨부 방법", "결과지 어디서 업로드?"
-5. **smalltalk**: 일반 대화, 인사, 잡담
-   - 예: "안녕", "고마워", "넌 뭐야?", "오늘 날씨 좋다"
-6. **other**: 위 어디에도 해당하지 않음
-
-## 응답 형식 (반드시 JSON만 출력)
-{"intent": "의도유형", "confidence": 0.0-1.0}
-
-예시:
-- 입력: "혈액검사 결과 좀 봐줘" → {"intent": "lab_analysis", "confidence": 0.95}
-- 입력: "안녕하세요!" → {"intent": "smalltalk", "confidence": 0.99}
-- 입력: "고양이가 경련을 해요 어떡해요" → {"intent": "emergency", "confidence": 0.98}
-"""
 
 
 class IntentClassifier:
@@ -67,7 +42,7 @@ class IntentClassifier:
         """
         # 메시지 구성
         messages = [
-            Message(role="system", content=INTENT_CLASSIFICATION_PROMPT),
+            Message(role="system", content=INTENT_CLASSIFICATION_SYSTEM_PROMPT),
             Message(role="user", content=user_input),
         ]
 
